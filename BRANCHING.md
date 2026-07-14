@@ -35,4 +35,5 @@ upstream ──► main (sync only)
 
 ## Cursor / ops pointer
 
-Apurata monorepo runbook: `docs/metabase/metabase_mcp_cursor.md` in [apurata/apurata](https://github.com/apurata/apurata) (or local monorepo path).
+- Clone path (Apurata monorepo): **`apurata/metabase-ai-assistant/`** (inner git repo; see monorepo `download_repos.sh`).
+- Runbook: `docs/metabase/metabase_mcp_cursor.md` in the [apurata monorepo](https://github.com/apurata/apurata) (or local root).
