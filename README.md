@@ -2,11 +2,16 @@
 
 MCP server for Metabase: SQL execution, questions, dashboards, metadata, and AI-assisted queries. Compatible with Claude, Cursor, and other MCP clients.
 
-## Rama `fix/read-only-enforcement-and-card-query` (vs `main`)
+## Apurata fork
 
-Estamos optimizando este MCP para **apurarlo** — menos latencia, respuestas más livianas y menos round-trips. Los cambios de esta rama son el primer paso; el trabajo de performance sigue en curso.
+- **Use branch for Cursor / internal:** [`apurata`](./BRANCHING.md) (not bare `main`).
+- **Branching strategy:** see **[BRANCHING.md](./BRANCHING.md)** — `main` tracks upstream; features branch from `main` for upstream PRs; merge into `apurata` for internal use.
 
-| Área | Antes (`main`) | Ahora (esta rama) |
+## Changes on `apurata` (vs `main`)
+
+Estamos optimizando este MCP para **apurarlo** — menos latencia, respuestas más livianas y menos round-trips. Los cambios de `apurata` (antes en `fix/read-only-enforcement-and-card-query`) son el primer paso; el trabajo de performance sigue en curso.
+
+| Área | Antes (`main`) | Ahora (`apurata`) |
 |------|----------------|-------------------|
 | **`mb_card_get` — `structuredContent`** | Metadatos básicos de la card | Incluye **`dataset_query`** (SQL nativo o MBQL) sin llamadas extra |
 | **`mb_card_get` — `outputSchema`** | `description` y `collection_id` solo como string/number | Tipos **nullable** alineados con Metabase |
