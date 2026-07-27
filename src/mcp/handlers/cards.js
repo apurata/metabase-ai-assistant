@@ -86,11 +86,41 @@ export class CardsHandler {
     }
   }
 
+  summarizeDatasetQuery(datasetQuery) {
+    if (!datasetQuery || typeof datasetQuery !== 'object') {
+      return 'None';
+    }
+
+    const type = datasetQuery.type || 'unknown';
+    const database = datasetQuery.database ?? 'unknown';
+
+    if (type === 'native') {
+      const sql = datasetQuery.native?.query;
+      if (typeof sql === 'string' && sql.trim()) {
+        const oneLine = sql.replace(/\s+/g, ' ').trim();
+        const preview = oneLine.length > 240 ? `${oneLine.slice(0, 240)}…` : oneLine;
+        return `type=native, database=${database}, sql=${preview}`;
+      }
+      return `type=native, database=${database}`;
+    }
+
+    if (type === 'query') {
+      const sourceTable = datasetQuery.query?.['source-table'];
+      const aggregations = datasetQuery.query?.aggregation?.length ?? 0;
+      const breakouts = datasetQuery.query?.breakout?.length ?? 0;
+      const filters = datasetQuery.query?.filter ? 1 : 0;
+      return `type=query, database=${database}, source-table=${sourceTable ?? 'n/a'}, aggregations=${aggregations}, breakouts=${breakouts}, has_filter=${filters === 1}`;
+    }
+
+    return `type=${type}, database=${database}`;
+  }
+
   async handleCardGet(args) {
     const { card_id } = args;
 
     try {
       const card = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
+      const datasetQuerySummary = this.summarizeDatasetQuery(card.dataset_query);
 
       return {
         content: [{
@@ -105,7 +135,8 @@ export class CardsHandler {
             `  Creator: ${card.creator?.email || 'Unknown'}\n` +
             `  Created: ${card.created_at}\n` +
             `  Updated: ${card.updated_at}\n` +
-            `  Archived: ${card.archived}`
+            `  Archived: ${card.archived}\n` +
+            `  Dataset query: ${datasetQuerySummary}`
         }],
         structuredContent: {
           id: card.id,
@@ -177,7 +208,12 @@ export class CardsHandler {
   }
 
   async handleCardData(args) {
-    const { card_id, format = 'json', parameters } = args;
+    const DEFAULT_MAX_ROWS = 150;
+    const { card_id, format = 'json', parameters, max_rows = DEFAULT_MAX_ROWS } = args;
+    const parsedMaxRows = Number(max_rows);
+    const maxRows = Number.isFinite(parsedMaxRows) && parsedMaxRows > 0
+      ? Math.floor(parsedMaxRows)
+      : DEFAULT_MAX_ROWS;
 
     try {
       let endpoint = `/api/card/${card_id}/query`;
@@ -193,14 +229,32 @@ export class CardsHandler {
         const data = result.data || result;
         const rows = data.rows || [];
         const cols = data.cols || [];
+        const totalRows = rows.length;
+        const truncated = totalRows > maxRows;
+        const returnedRows = truncated ? rows.slice(0, maxRows) : rows;
+        const columnNames = cols.map(c => c.display_name || c.name);
+
+        const header = truncated
+          ? `Card ${card_id} data (${totalRows} rows total, returning first ${returnedRows.length}; truncated: true):\n`
+          : `Card ${card_id} data (${totalRows} rows):\n`;
 
         return {
           content: [{
             type: 'text',
-            text: `Card ${card_id} data (${rows.length} rows):\n` +
-              `Columns: ${cols.map(c => c.display_name || c.name).join(', ')}\n\n` +
-              `Sample (first 10 rows):\n${JSON.stringify(rows.slice(0, 10), null, 2)}`
-          }]
+            text: header +
+              `Columns: ${columnNames.join(', ')}\n\n` +
+              `${truncated ? `Sample (first ${returnedRows.length} of ${totalRows} rows)` : 'Rows'}:\n` +
+              `${JSON.stringify(returnedRows, null, 2)}`
+          }],
+          structuredContent: {
+            card_id,
+            columns: columnNames,
+            rows: returnedRows,
+            row_count: totalRows,
+            returned_row_count: returnedRows.length,
+            max_rows: maxRows,
+            truncated,
+          },
         };
       } else {
         return {

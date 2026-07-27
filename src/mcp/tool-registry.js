@@ -180,7 +180,23 @@ const TOOL_METADATA = {
   mb_card_update: { title: 'Update Card', write: true, destructive: false, idempotent: true },
   mb_card_delete: { title: 'Delete Card', write: true, destructive: true, idempotent: true },
   mb_card_archive: { title: 'Archive Card', write: true, destructive: false, idempotent: true },
-  mb_card_data: { title: 'Get Card Data' },
+  mb_card_data: {
+    title: 'Get Card Data',
+    outputSchema: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        card_id: { type: 'number' },
+        columns: { type: 'array', items: { type: 'string' } },
+        rows: { type: 'array', items: { type: 'array' } },
+        row_count: { type: 'number' },
+        returned_row_count: { type: 'number' },
+        max_rows: { type: 'number' },
+        truncated: { type: 'boolean' }
+      },
+      required: ['card_id', 'columns', 'rows', 'row_count', 'returned_row_count', 'max_rows', 'truncated']
+    }
+  },
   mb_card_copy: { title: 'Copy Card', write: true, destructive: false, idempotent: false },
   mb_card_clone: { title: 'Clone Card', write: true, destructive: false, idempotent: false },
 
@@ -2993,7 +3009,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_data',
-      description: 'Execute a card/question and get the results in specified format',
+      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true and include total row_count.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3010,6 +3026,11 @@ export function getToolDefinitions() {
           parameters: {
             type: 'object',
             description: 'Optional parameters for parametric questions'
+          },
+          max_rows: {
+            type: 'number',
+            default: 150,
+            description: 'Maximum rows to return for JSON format (default 150). If the card has more rows, response is truncated with truncated=true and full row_count.'
           }
         },
         required: ['card_id']

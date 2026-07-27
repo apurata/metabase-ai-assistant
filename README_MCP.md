@@ -65,10 +65,10 @@ MCP SDK v1.26.0 — tools include annotations (`readOnlyHint`, `destructiveHint`
 ### Question/Chart Operations
 - **mb_question_create**: Create new question/chart in Metabase
 - **mb_questions**: List existing questions
-- **mb_card_get**: Get card details
+- **mb_card_get**: Get card details (includes a short `dataset_query` summary in text plus full query in structuredContent)
 - **mb_card_update**: Update card properties
 - **mb_card_delete**: Delete card
-- **mb_card_data**: Get card result data
+- **mb_card_data**: Get card result data (returns up to `max_rows`, default **150**; sets `truncated: true` + total `row_count` when larger)
 
 ### Dashboard Operations
 - **mb_dashboard_create**: Create new dashboard
@@ -268,6 +268,20 @@ MCP SDK v1.26.0 — tools include annotations (`readOnlyHint`, `destructiveHint`
   "collection_id": 1
 }
 ```
+
+### mb_card_data
+```json
+{
+  "card_id": 1838,
+  "format": "json",
+  "max_rows": 150
+}
+```
+
+Returns all rows when `row_count ≤ max_rows`. If larger, returns the first `max_rows` rows with `truncated: true` and the full `row_count` in `structuredContent`.
+
+### mb_card_get
+Text output includes a short `Dataset query:` summary (native SQL preview or MBQL source-table/aggregations). Full `dataset_query` is also in `structuredContent`.
 
 ---
 

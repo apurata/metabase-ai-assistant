@@ -14,8 +14,10 @@ Estamos optimizando este MCP para **apurarlo** — menos latencia, respuestas m�
 | Área | Antes (`main`) | Ahora (`apurata`) |
 |------|----------------|-------------------|
 | **`mb_card_get` — `structuredContent`** | Metadatos básicos de la card | Incluye **`dataset_query`** (SQL nativo o MBQL) sin llamadas extra |
+| **`mb_card_get` — texto** | Sin resumen de query | Incluye resumen corto de **`dataset_query`** (Cursor no siempre expone structuredContent) |
 | **`mb_card_get` — `outputSchema`** | `description` y `collection_id` solo como string/number | Tipos **nullable** alineados con Metabase |
 | **`mb_card_get` — schema JSON** | Propiedades fijas | `additionalProperties: true` |
+| **`mb_card_data`** | Truncaba siempre a **10** filas | Devuelve hasta **`max_rows`** (default **150**); si hay más → `truncated: true` + `row_count` |
 | **Handler `cards.js`** | `description \|\| null`, `collection_id \|\| null` | **`?? null`** para distinguir vacío de `null` real |
 
 **Por qué importa:** en modo read-only, un agente puede leer el SQL/MBQL de una pregunta existente desde `mb_card_get` sin herramientas de escritura ni parsear texto plano.
