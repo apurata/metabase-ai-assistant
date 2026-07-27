@@ -281,7 +281,7 @@ MCP SDK v1.26.0 — tools include annotations (`readOnlyHint`, `destructiveHint`
 Returns all rows when `row_count ≤ max_rows`. If larger, returns the first `max_rows` rows with `truncated: true` and the full `row_count` in `structuredContent`.
 
 ### mb_card_get
-Text output includes a short `Dataset query:` summary (native SQL preview or MBQL source-table/aggregations). Full `dataset_query` is also in `structuredContent`.
+Text output includes a short `Dataset query:` summary (classic `native`/`query`, or newer MBQL `lib/type` + `stages`: source-table/aggregations/filters, or native query preview including Mongo pipelines). Full `dataset_query` is also in `structuredContent`.
 
 ---
 

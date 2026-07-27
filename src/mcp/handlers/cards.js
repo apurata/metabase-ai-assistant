@@ -1,6 +1,9 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../../utils/logger.js';
 
+const DEFAULT_CARD_DATA_MAX_ROWS = 150;
+const DATASET_QUERY_PREVIEW_MAX = 240;
+
 export class CardsHandler {
   constructor(metabaseClient) {
     this.metabaseClient = metabaseClient;
@@ -86,32 +89,66 @@ export class CardsHandler {
     }
   }
 
+  previewQueryText(text) {
+    if (typeof text !== 'string' || !text.trim()) return null;
+    const oneLine = text.replace(/\s+/g, ' ').trim();
+    return oneLine.length > DATASET_QUERY_PREVIEW_MAX
+      ? `${oneLine.slice(0, DATASET_QUERY_PREVIEW_MAX)}…`
+      : oneLine;
+  }
+
+  summarizeNativeQuery(native, database, collection) {
+    const parts = [`type=native`, `database=${database}`];
+    const coll = collection || native?.collection;
+    if (coll) {
+      parts.push(`collection=${coll}`);
+    }
+
+    // Classic: { query: "..." }. Newer Mongo/lib stages: native is the query string itself.
+    const rawQuery = typeof native === 'string' ? native : native?.query;
+    const preview = this.previewQueryText(rawQuery);
+    if (preview) {
+      parts.push(`query=${preview}`);
+    }
+    return parts.join(', ');
+  }
+
+  summarizeMbqlStage(stage, database) {
+    const sourceTable = stage?.['source-table'];
+    const aggregations = stage?.aggregation?.length ?? 0;
+    const breakouts = stage?.breakout?.length ?? 0;
+    const filterCount = Array.isArray(stage?.filters)
+      ? stage.filters.length
+      : (stage?.filter ? 1 : 0);
+    return `type=query, database=${database}, source-table=${sourceTable ?? 'n/a'}, aggregations=${aggregations}, breakouts=${breakouts}, filters=${filterCount}`;
+  }
+
   summarizeDatasetQuery(datasetQuery) {
     if (!datasetQuery || typeof datasetQuery !== 'object') {
       return 'None';
     }
 
-    const type = datasetQuery.type || 'unknown';
     const database = datasetQuery.database ?? 'unknown';
 
-    if (type === 'native') {
-      const sql = datasetQuery.native?.query;
-      if (typeof sql === 'string' && sql.trim()) {
-        const oneLine = sql.replace(/\s+/g, ' ').trim();
-        const preview = oneLine.length > 240 ? `${oneLine.slice(0, 240)}…` : oneLine;
-        return `type=native, database=${database}, sql=${preview}`;
+    // Classic Metabase format: { type: 'native'|'query', ... }
+    if (datasetQuery.type === 'native') {
+      return this.summarizeNativeQuery(datasetQuery.native, database);
+    }
+
+    if (datasetQuery.type === 'query') {
+      return this.summarizeMbqlStage(datasetQuery.query, database);
+    }
+
+    // Newer Metabase MBQL lib format: { 'lib/type': 'mbql/query', stages: [...] }
+    if (datasetQuery['lib/type'] === 'mbql/query' && Array.isArray(datasetQuery.stages)) {
+      const stage = datasetQuery.stages[0] || {};
+      if (stage['lib/type'] === 'mbql.stage/native' || stage.native != null) {
+        return this.summarizeNativeQuery(stage.native, database, stage.collection);
       }
-      return `type=native, database=${database}`;
+      return this.summarizeMbqlStage(stage, database);
     }
 
-    if (type === 'query') {
-      const sourceTable = datasetQuery.query?.['source-table'];
-      const aggregations = datasetQuery.query?.aggregation?.length ?? 0;
-      const breakouts = datasetQuery.query?.breakout?.length ?? 0;
-      const filters = datasetQuery.query?.filter ? 1 : 0;
-      return `type=query, database=${database}, source-table=${sourceTable ?? 'n/a'}, aggregations=${aggregations}, breakouts=${breakouts}, has_filter=${filters === 1}`;
-    }
-
+    const type = datasetQuery.type || datasetQuery['lib/type'] || 'unknown';
     return `type=${type}, database=${database}`;
   }
 
@@ -208,12 +245,11 @@ export class CardsHandler {
   }
 
   async handleCardData(args) {
-    const DEFAULT_MAX_ROWS = 150;
-    const { card_id, format = 'json', parameters, max_rows = DEFAULT_MAX_ROWS } = args;
+    const { card_id, format = 'json', parameters, max_rows = DEFAULT_CARD_DATA_MAX_ROWS } = args;
     const parsedMaxRows = Number(max_rows);
     const maxRows = Number.isFinite(parsedMaxRows) && parsedMaxRows > 0
       ? Math.floor(parsedMaxRows)
-      : DEFAULT_MAX_ROWS;
+      : DEFAULT_CARD_DATA_MAX_ROWS;
 
     try {
       let endpoint = `/api/card/${card_id}/query`;
