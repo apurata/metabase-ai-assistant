@@ -2,6 +2,29 @@ import axios from 'axios';
 import { logger } from '../utils/logger.js';
 import { sanitizeNumber, sanitizeLikePattern } from '../utils/sql-sanitizer.js';
 
+/** Prefer Metabase body message; fall back to status + serialized body (agents need more than "status code 500"). */
+export function formatMetabaseApiError(error, method, endpoint) {
+  const status = error.response?.status;
+  const data = error.response?.data;
+  let detail = error.message;
+  if (data != null) {
+    if (typeof data === 'string' && data.trim()) {
+      detail = data.trim();
+    } else if (typeof data === 'object') {
+      detail =
+        data.message ||
+        data.error ||
+        (data.errors ? JSON.stringify(data.errors) : null) ||
+        JSON.stringify(data);
+    }
+  }
+  if (typeof detail === 'string' && detail.length > 2000) {
+    detail = `${detail.slice(0, 2000)}…`;
+  }
+  const statusPart = status != null ? `status ${status}` : (error.code || 'no-status');
+  return `Metabase API Error (${statusPart}) ${method} ${endpoint}: ${detail}`;
+}
+
 export class MetabaseClient {
   constructor(config) {
     this.baseURL = config.url;
@@ -88,9 +111,12 @@ export class MetabaseClient {
       const response = await this.client.request(requestConfig);
       return response.data;
     } catch (error) {
-      const errorMsg = error.response?.data?.message || error.message;
-      logger.error(`API Request Failed: ${methodUpper} ${endpoint}`, { error: errorMsg });
-      throw new Error(`Metabase API Error: ${errorMsg}`);
+      const errorMsg = formatMetabaseApiError(error, methodUpper, endpoint);
+      logger.error(`API Request Failed: ${methodUpper} ${endpoint}`, {
+        error: errorMsg,
+        status: error.response?.status,
+      });
+      throw new Error(errorMsg);
     }
   }
 

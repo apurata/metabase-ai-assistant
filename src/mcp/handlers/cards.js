@@ -1,8 +1,9 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../../utils/logger.js';
+import { assertWritableCollection } from '../write-guards.js';
 
 const DEFAULT_CARD_DATA_MAX_ROWS = 150;
-const DATASET_QUERY_PREVIEW_MAX = 240;
+const NATIVE_QUERY_TEXT_MAX = 50000;
 
 export class CardsHandler {
   constructor(metabaseClient) {
@@ -24,26 +25,116 @@ export class CardsHandler {
     };
   }
 
-  async handleCreateQuestion(args) {
-    const question = await this.metabaseClient.createSQLQuestion(
-      args.name,
-      args.description,
-      args.database_id,
-      args.sql,
-      args.collection_id
-    );
+  previewQueryText(text, max = 240) {
+    if (typeof text !== 'string' || !text.trim()) return null;
+    const oneLine = text.replace(/\s+/g, ' ').trim();
+    return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+  }
+
+  extractNativeParts(datasetQuery) {
+    if (!datasetQuery || typeof datasetQuery !== 'object') {
+      return { kind: 'none' };
+    }
+
+    const database = datasetQuery.database ?? 'unknown';
+
+    if (datasetQuery.type === 'native') {
+      const native = datasetQuery.native;
+      const query = typeof native === 'string' ? native : native?.query;
+      const collection = typeof native === 'object' ? native?.collection : null;
+      const templateTags = typeof native === 'object' ? native?.['template-tags'] : null;
+      return { kind: 'native', database, query, collection, templateTags };
+    }
+
+    if (datasetQuery.type === 'query') {
+      return { kind: 'mbql', database, stage: datasetQuery.query };
+    }
+
+    if (datasetQuery['lib/type'] === 'mbql/query' && Array.isArray(datasetQuery.stages)) {
+      const stage = datasetQuery.stages[0] || {};
+      if (stage['lib/type'] === 'mbql.stage/native' || stage.native != null) {
+        const native = stage.native;
+        const query = typeof native === 'string' ? native : native?.query;
+        return {
+          kind: 'native',
+          database,
+          query,
+          collection: stage.collection || (typeof native === 'object' ? native?.collection : null),
+          templateTags: typeof native === 'object' ? native?.['template-tags'] : null,
+        };
+      }
+      return { kind: 'mbql', database, stage };
+    }
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: `Question created successfully!\\nName: ${question.name}\\nID: ${question.id}\\nURL: ${process.env.METABASE_URL}/question/${question.id}`,
-        },
-      ],
+      kind: 'other',
+      database,
+      type: datasetQuery.type || datasetQuery['lib/type'] || 'unknown',
     };
   }
 
-  async handleGetQuestions(args) {
+  summarizeDatasetQuery(datasetQuery) {
+    const parts = this.extractNativeParts(datasetQuery);
+    if (parts.kind === 'none') return 'None';
+    if (parts.kind === 'native') {
+      const bits = [`type=native`, `database=${parts.database}`];
+      if (parts.collection) bits.push(`collection=${parts.collection}`);
+      const preview = this.previewQueryText(parts.query);
+      if (preview) bits.push(`query=${preview}`);
+      return bits.join(', ');
+    }
+    if (parts.kind === 'mbql') {
+      const stage = parts.stage || {};
+      const sourceTable = stage['source-table'];
+      const aggregations = stage?.aggregation?.length ?? 0;
+      const breakouts = stage?.breakout?.length ?? 0;
+      const filterCount = Array.isArray(stage?.filters)
+        ? stage.filters.length
+        : (stage?.filter ? 1 : 0);
+      return `type=query, database=${parts.database}, source-table=${sourceTable ?? 'n/a'}, aggregations=${aggregations}, breakouts=${breakouts}, filters=${filterCount}`;
+    }
+    return `type=${parts.type}, database=${parts.database}`;
+  }
+
+  formatNativeQueryForText(query) {
+    if (typeof query !== 'string' || !query.trim()) return null;
+    if (query.length <= NATIVE_QUERY_TEXT_MAX) return query;
+    return `${query.slice(0, NATIVE_QUERY_TEXT_MAX)}\n… [truncated ${query.length - NATIVE_QUERY_TEXT_MAX} chars]`;
+  }
+
+  async assertCardWritable(cardId, action, targetCollectionId) {
+    const card = await this.metabaseClient.request('GET', `/api/card/${cardId}`);
+    const effectiveCollectionId =
+      targetCollectionId !== undefined ? targetCollectionId : card.collection_id;
+    assertWritableCollection(effectiveCollectionId, `${action} card ${cardId}`);
+    return card;
+  }
+
+  async handleCreateQuestion(args) {
+    try {
+      assertWritableCollection(args.collection_id, 'mb_question_create');
+      const question = await this.metabaseClient.createSQLQuestion(
+        args.name,
+        args.description,
+        args.database_id,
+        args.sql,
+        args.collection_id
+      );
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Question created successfully!\\nName: ${question.name}\\nID: ${question.id}\\nURL: ${process.env.METABASE_URL}/question/${question.id}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `❌ Create question error: ${error.message}` }] };
+    }
+  }
+
+  async handleGetQuestions(collectionId) {
     const response = await this.metabaseClient.getQuestions(collectionId);
     const questions = response.data || response; // Handle both formats
 
@@ -65,6 +156,7 @@ export class CardsHandler {
 
   async handleCreateParametricQuestion(args) {
     try {
+      assertWritableCollection(args.collection_id, 'mb_question_create_parametric');
       const question = await this.metabaseClient.createParametricQuestion(args);
 
       let output = `✅ Parametric Question Created Successfully!\\n\\n`;
@@ -89,92 +181,44 @@ export class CardsHandler {
     }
   }
 
-  previewQueryText(text) {
-    if (typeof text !== 'string' || !text.trim()) return null;
-    const oneLine = text.replace(/\s+/g, ' ').trim();
-    return oneLine.length > DATASET_QUERY_PREVIEW_MAX
-      ? `${oneLine.slice(0, DATASET_QUERY_PREVIEW_MAX)}…`
-      : oneLine;
-  }
-
-  summarizeNativeQuery(native, database, collection) {
-    const parts = [`type=native`, `database=${database}`];
-    const coll = collection || native?.collection;
-    if (coll) {
-      parts.push(`collection=${coll}`);
-    }
-
-    // Classic: { query: "..." }. Newer Mongo/lib stages: native is the query string itself.
-    const rawQuery = typeof native === 'string' ? native : native?.query;
-    const preview = this.previewQueryText(rawQuery);
-    if (preview) {
-      parts.push(`query=${preview}`);
-    }
-    return parts.join(', ');
-  }
-
-  summarizeMbqlStage(stage, database) {
-    const sourceTable = stage?.['source-table'];
-    const aggregations = stage?.aggregation?.length ?? 0;
-    const breakouts = stage?.breakout?.length ?? 0;
-    const filterCount = Array.isArray(stage?.filters)
-      ? stage.filters.length
-      : (stage?.filter ? 1 : 0);
-    return `type=query, database=${database}, source-table=${sourceTable ?? 'n/a'}, aggregations=${aggregations}, breakouts=${breakouts}, filters=${filterCount}`;
-  }
-
-  summarizeDatasetQuery(datasetQuery) {
-    if (!datasetQuery || typeof datasetQuery !== 'object') {
-      return 'None';
-    }
-
-    const database = datasetQuery.database ?? 'unknown';
-
-    // Classic Metabase format: { type: 'native'|'query', ... }
-    if (datasetQuery.type === 'native') {
-      return this.summarizeNativeQuery(datasetQuery.native, database);
-    }
-
-    if (datasetQuery.type === 'query') {
-      return this.summarizeMbqlStage(datasetQuery.query, database);
-    }
-
-    // Newer Metabase MBQL lib format: { 'lib/type': 'mbql/query', stages: [...] }
-    if (datasetQuery['lib/type'] === 'mbql/query' && Array.isArray(datasetQuery.stages)) {
-      const stage = datasetQuery.stages[0] || {};
-      if (stage['lib/type'] === 'mbql.stage/native' || stage.native != null) {
-        return this.summarizeNativeQuery(stage.native, database, stage.collection);
-      }
-      return this.summarizeMbqlStage(stage, database);
-    }
-
-    const type = datasetQuery.type || datasetQuery['lib/type'] || 'unknown';
-    return `type=${type}, database=${database}`;
-  }
-
   async handleCardGet(args) {
     const { card_id } = args;
 
     try {
       const card = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
       const datasetQuerySummary = this.summarizeDatasetQuery(card.dataset_query);
+      const nativeParts = this.extractNativeParts(card.dataset_query);
+
+      let text =
+        `Card Details:\n` +
+        `  ID: ${card.id}\n` +
+        `  Name: ${card.name}\n` +
+        `  Description: ${card.description || 'None'}\n` +
+        `  Type: ${card.display}\n` +
+        `  Database: ${card.database_id}\n` +
+        `  Collection: ${card.collection_id || 'Root'}\n` +
+        `  Creator: ${card.creator?.email || 'Unknown'}\n` +
+        `  Created: ${card.created_at}\n` +
+        `  Updated: ${card.updated_at}\n` +
+        `  Archived: ${card.archived}\n` +
+        `  Dataset query: ${datasetQuerySummary}`;
+
+      if (nativeParts.kind === 'native') {
+        if (nativeParts.collection) {
+          text += `\n  Mongo collection: ${nativeParts.collection}`;
+        }
+        const tags = nativeParts.templateTags;
+        if (tags && typeof tags === 'object' && Object.keys(tags).length > 0) {
+          text += `\n  Template tags:\n${JSON.stringify(tags, null, 2)}`;
+        }
+        const fullQuery = this.formatNativeQueryForText(nativeParts.query);
+        if (fullQuery) {
+          text += `\n  Native query:\n${fullQuery}`;
+        }
+      }
 
       return {
-        content: [{
-          type: 'text',
-          text: `Card Details:\n` +
-            `  ID: ${card.id}\n` +
-            `  Name: ${card.name}\n` +
-            `  Description: ${card.description || 'None'}\n` +
-            `  Type: ${card.display}\n` +
-            `  Database: ${card.database_id}\n` +
-            `  Collection: ${card.collection_id || 'Root'}\n` +
-            `  Creator: ${card.creator?.email || 'Unknown'}\n` +
-            `  Created: ${card.created_at}\n` +
-            `  Updated: ${card.updated_at}\n` +
-            `  Archived: ${card.archived}\n` +
-            `  Dataset query: ${datasetQuerySummary}`
-        }],
+        content: [{ type: 'text', text }],
         structuredContent: {
           id: card.id,
           name: card.name,
@@ -194,15 +238,47 @@ export class CardsHandler {
   }
 
   async handleCardUpdate(args) {
-    const { card_id, ...updates } = args;
+    const { card_id, dataset_query, native_query, mongo_collection, template_tags, ...rest } = args;
 
     try {
+      await this.assertCardWritable(card_id, 'mb_card_update', rest.collection_id);
+
+      const updates = { ...rest };
+
+      if (dataset_query !== undefined) {
+        updates.dataset_query =
+          typeof dataset_query === 'string' ? JSON.parse(dataset_query) : dataset_query;
+      } else if (native_query !== undefined) {
+        const existing = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
+        const current = existing.dataset_query || {};
+        const database = current.database ?? existing.database_id;
+        const prevNative = current.type === 'native' && typeof current.native === 'object'
+          ? current.native
+          : {};
+        updates.dataset_query = {
+          type: 'native',
+          database,
+          native: {
+            ...prevNative,
+            query: native_query,
+            ...(mongo_collection !== undefined ? { collection: mongo_collection } : {}),
+            ...(template_tags !== undefined
+              ? {
+                  'template-tags':
+                    typeof template_tags === 'string' ? JSON.parse(template_tags) : template_tags,
+                }
+              : {}),
+          },
+        };
+      }
+
       const card = await this.metabaseClient.request('PUT', `/api/card/${card_id}`, updates);
 
       return {
         content: [{
           type: 'text',
-          text: `✅ Card ${card_id} updated successfully`
+          text: `✅ Card ${card_id} updated successfully` +
+            (updates.dataset_query ? `\n  Dataset query: ${this.summarizeDatasetQuery(card.dataset_query || updates.dataset_query)}` : '')
         }]
       };
     } catch (error) {
@@ -214,6 +290,7 @@ export class CardsHandler {
     const { card_id } = args;
 
     try {
+      await this.assertCardWritable(card_id, 'mb_card_delete');
       await this.metabaseClient.request('DELETE', `/api/card/${card_id}`);
 
       return {
@@ -231,6 +308,7 @@ export class CardsHandler {
     const { card_id } = args;
 
     try {
+      await this.assertCardWritable(card_id, 'mb_card_archive');
       await this.metabaseClient.request('PUT', `/api/card/${card_id}`, { archived: true });
 
       return {
@@ -311,6 +389,8 @@ export class CardsHandler {
     try {
       // Get source card
       const sourceCard = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
+      const targetCollectionId = collection_id || sourceCard.collection_id;
+      assertWritableCollection(targetCollectionId, 'mb_card_copy');
 
       // Create copy
       const newCard = {
@@ -319,7 +399,7 @@ export class CardsHandler {
         display: sourceCard.display,
         dataset_query: sourceCard.dataset_query,
         visualization_settings: sourceCard.visualization_settings,
-        collection_id: collection_id || sourceCard.collection_id
+        collection_id: targetCollectionId
       };
 
       const createdCard = await this.metabaseClient.request('POST', '/api/card', newCard);
@@ -341,6 +421,8 @@ export class CardsHandler {
     try {
       // Get source card
       const sourceCard = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
+      const targetCollectionId = collection_id || sourceCard.collection_id;
+      assertWritableCollection(targetCollectionId, 'mb_card_clone');
 
       // Clone and retarget the query
       const query = { ...sourceCard.dataset_query };
@@ -365,7 +447,7 @@ export class CardsHandler {
         display: sourceCard.display,
         dataset_query: query,
         visualization_settings: sourceCard.visualization_settings,
-        collection_id: collection_id || sourceCard.collection_id
+        collection_id: targetCollectionId
       };
 
       const createdCard = await this.metabaseClient.request('POST', '/api/card', newCard);

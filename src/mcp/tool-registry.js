@@ -2938,7 +2938,7 @@ export function getToolDefinitions() {
     // ==================== CARD/QUESTION CRUD ====================
     {
       name: 'mb_card_get',
-      description: 'Get detailed information about a specific card/question',
+      description: 'Get detailed information about a specific card/question. Text response includes dataset_query summary, Mongo collection, template-tags, and full native query (Cursor may not expose structuredContent).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2952,7 +2952,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_update',
-      description: 'Update an existing card/question',
+      description: 'Update an existing card/question. Supports dataset_query (full object) or native_query (+ optional mongo_collection / template_tags). When METABASE_WRITABLE_COLLECTION_IDS is set, only cards in those collections can be mutated.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2973,7 +2973,29 @@ export function getToolDefinitions() {
           },
           collection_id: {
             type: 'number',
-            description: 'Move to collection ID'
+            description: 'Move to collection ID (must be allowlisted when METABASE_WRITABLE_COLLECTION_IDS is set)'
+          },
+          dataset_query: {
+            description: 'Full Metabase dataset_query object (or JSON string). Replaces the card query.',
+            oneOf: [
+              { type: 'object' },
+              { type: 'string' }
+            ]
+          },
+          native_query: {
+            type: 'string',
+            description: 'Convenience: set native query text (SQL or Mongo aggregation JSON string). Merges into existing native dataset_query.'
+          },
+          mongo_collection: {
+            type: 'string',
+            description: 'Mongo collection name for native Mongo questions (with native_query)'
+          },
+          template_tags: {
+            description: 'Native template-tags object (or JSON string), used with native_query',
+            oneOf: [
+              { type: 'object' },
+              { type: 'string' }
+            ]
           }
         },
         required: ['card_id']
@@ -3009,7 +3031,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_data',
-      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true and include total row_count.',
+      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true. API errors include HTTP status and Metabase response body.',
       inputSchema: {
         type: 'object',
         properties: {
