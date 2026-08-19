@@ -13,6 +13,8 @@ Upstream package: [metabase-ai-assistant on npm](https://www.npmjs.com/package/m
 
 Do **not** open PRs to upstream from `apurata` tip (it accumulates Apurata-only history). Cherry-pick or re-branch from `main` when contributing back.
 
+**Upstream is dormant** (`enessari/metabase-ai-assistant`: last push Feb 2026; open PRs including [#15](https://github.com/enessari/metabase-ai-assistant/pull/15) have no maintainer review). **Do not** open new PRs there (and do not ping existing ones) until the maintainer comments, reviews, or merges again **and** the human explicitly OK’s a contribution.
+
 ## Workflow
 
 ```text
@@ -20,16 +22,13 @@ upstream ──► main (sync only)
                 │
                 └── feature/foo
                         │
-                        ├── 1) PR → apurata (internal Cursor use)  ← default
-                        │
-                        └── 2) PR → upstream  ← only with explicit human OK
-                                   └── when accepted, sync main; keep apurata current
+                        └── PR → apurata (internal Cursor use)  ← only path while upstream is dormant
 ```
 
 1. **Daily Cursor MCP:** `git checkout apurata && git pull`.
 2. **New work:** `git checkout main && git pull` → `git checkout -b feature/…` (or `fix/…`).
-3. **Ship internally first:** open a **PR into `apurata`** and merge after review.
-4. **Upstream (optional):** open a PR to **upstream** from the same feature branch **only after explicit human approval**. Do not open it by default.
+3. **Ship internally:** open a **PR into `apurata`** and merge after review.
+4. **Upstream:** paused — see dormancy note above. When it is allowed again: same feature branch, human OK first; after accept, sync `main` and keep `apurata` current.
 5. **Sync main:** periodically fetch/merge or rebase `main` onto upstream `main` (no Apurata-only commits).
 
 ## Historical note
