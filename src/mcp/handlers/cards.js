@@ -687,6 +687,30 @@ export class CardsHandler {
       const dashboard = await this.metabaseClient.request('GET', `/api/dashboard/${dashboard_id}`);
 
       const cards = dashboard.dashcards || dashboard.ordered_cards || [];
+      const tabs = dashboard.tabs || [];
+      const tabNameById = new Map(tabs.map(t => [t.id, t.name]));
+      const layoutCards = cards.map(c => ({
+        id: c.id,
+        card_id: c.card_id ?? null,
+        name: c.card?.name || c.visualization_settings?.text || null,
+        dashboard_tab_id: c.dashboard_tab_id ?? null,
+        row: c.row,
+        col: c.col,
+        size_x: c.size_x,
+        size_y: c.size_y,
+      }));
+      const tabsText = tabs.length
+        ? tabs.map(t => `    [${t.id}] ${t.name}`).join('\n')
+        : '    (none)';
+      const cardsText = layoutCards.length
+        ? layoutCards.map(c => {
+          const tabLabel = c.dashboard_tab_id == null
+            ? 'no-tab'
+            : `${c.dashboard_tab_id}:${tabNameById.get(c.dashboard_tab_id) || '?'}`;
+          return `    tab=${tabLabel} r${c.row} c${c.col} ${c.size_x}x${c.size_y} card_id=${c.card_id} ${c.name || '(unnamed)'}`;
+        }).join('\n')
+        : '    (none)';
+
       return {
         content: [{
           type: 'text',
@@ -695,7 +719,8 @@ export class CardsHandler {
             `  Name: ${dashboard.name}\n` +
             `  Description: ${dashboard.description || 'None'}\n` +
             `  Collection: ${dashboard.collection_id || 'Root'}\n` +
-            `  Cards: ${cards.length}\n` +
+            `  Tabs (${tabs.length}):\n${tabsText}\n` +
+            `  Cards (${cards.length}):\n${cardsText}\n` +
             `  Parameters: ${(dashboard.parameters || []).length}\n` +
             `  Creator: ${dashboard.creator?.email || 'Unknown'}\n` +
             `  Created: ${dashboard.created_at}\n` +
@@ -705,8 +730,10 @@ export class CardsHandler {
         structuredContent: {
           id: dashboard.id,
           name: dashboard.name,
-          description: dashboard.description || null,
-          cards: cards.map(c => ({ id: c.id, card_id: c.card_id })),
+          description: dashboard.description ?? '',
+          collection_id: dashboard.collection_id ?? null,
+          tabs: tabs.map(t => ({ id: t.id, name: t.name })),
+          cards: layoutCards,
           parameters: dashboard.parameters || [],
         },
       };
