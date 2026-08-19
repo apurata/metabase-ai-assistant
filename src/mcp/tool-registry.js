@@ -226,7 +226,10 @@ const TOOL_METADATA = {
       type: 'object',
       properties: {
         id: { type: 'number' }, name: { type: 'string' },
-        description: { type: 'string' },
+        // Metabase stores missing dashboard copy as JSON null, not "".
+        description: { type: ['string', 'null'] },
+        collection_id: { type: ['number', 'null'] },
+        tabs: { type: 'array' },
         cards: { type: 'array' }, parameters: { type: 'array' }
       }, required: ['id', 'name']
     }
