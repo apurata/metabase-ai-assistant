@@ -22,12 +22,12 @@ upstream ──► main (sync only)
                 │
                 └── feature/foo
                         │
-                        └── PR → apurata (internal Cursor use)  ← only path while upstream is dormant
+                        └── merge local → apurata + push  ← only path while upstream is dormant
 ```
 
 1. **Daily Cursor MCP:** `git checkout apurata && git pull`.
 2. **New work:** `git checkout main && git pull` → `git checkout -b feature/…` (or `fix/…`).
-3. **Ship internally:** open a **PR into `apurata`** and merge after review.
+3. **Ship internally:** **merge locally into `apurata`** and push. **Do not** open GitHub PRs on this fork (no PR history; a GitHub PR would be #1).
 4. **Upstream:** paused — see dormancy note above. When it is allowed again: same feature branch, human OK first; after accept, sync `main` and keep `apurata` current.
 5. **Sync main:** periodically fetch/merge or rebase `main` onto upstream `main` (no Apurata-only commits).
 
