@@ -605,14 +605,18 @@ export class MetabaseClient {
 
       for (const endpoint of endpoints) {
         try {
-          const response = await this.client.post(endpoint, {
+          const payload = {
             card_id: cardId,
             size_x: options.sizeX || 4,
             size_y: options.sizeY || 4,
             row: options.row || 0,
             col: options.col || 0,
             parameter_mappings: options.parameter_mappings || []
-          });
+          };
+          if (options.dashboard_tab_id != null) {
+            payload.dashboard_tab_id = options.dashboard_tab_id;
+          }
+          const response = await this.client.post(endpoint, payload);
           return response.data;
         } catch (err) {
           // Try next endpoint

@@ -219,6 +219,22 @@ const TOOL_METADATA = {
   },
   mb_dashboard_template_executive: { title: 'Create Executive Dashboard', write: true, destructive: false, idempotent: false },
   mb_dashboard_add_card: { title: 'Add Card to Dashboard', write: true, destructive: false, idempotent: false },
+  mb_dashboard_tab_create: {
+    title: 'Create Dashboard Tab', write: true, destructive: false, idempotent: false,
+    outputSchema: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        dashboard_id: { type: 'number' },
+        tab: {
+          type: ['object', 'null'],
+          properties: { id: { type: 'number' }, name: { type: 'string' } },
+        },
+        tabs: { type: 'array' },
+      },
+      required: ['dashboard_id', 'tabs']
+    }
+  },
   mb_dashboard_add_card_sql: { title: 'Add Cards via SQL', write: true, destructive: false, idempotent: false },
   mb_dashboard_update_layout: { title: 'Update Dashboard Layout', write: true, destructive: false, idempotent: true },
   mb_dashboard_get: {
@@ -260,13 +276,15 @@ const TOOL_METADATA = {
       properties: {
         collections: {
           type: 'array', items: {
-            type: 'object', properties: {
-              id: { type: 'number' }, name: { type: 'string' }
+            type: 'object', additionalProperties: true, properties: {
+              id: { type: ['number', 'string'] },
+              name: { type: 'string' },
+              parent_id: { type: ['number', 'string', 'null'] }
             }, required: ['id', 'name']
           }
         },
         count: { type: 'number' }
-      }, required: ['collections']
+      }, required: ['collections', 'count']
     }
   },
   mb_collection_move: { title: 'Move Collection', write: true, destructive: false, idempotent: true },
@@ -796,7 +814,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_dashboard_add_card',
-      description: 'Add a question card to a dashboard with specific positioning, sizing, and layout',
+      description: 'Add a question card to a dashboard with specific positioning, sizing, and layout. If the dashboard has tabs, dashboard_tab_id is required (no silent default to the first tab).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -850,9 +868,31 @@ export function getToolDefinitions() {
                 }
               }
             }
+          },
+          dashboard_tab_id: {
+            type: 'number',
+            description: 'Target dashboard tab id. Required when the dashboard has tabs. Omit only for tabless dashboards.',
           }
         },
         required: ['dashboard_id', 'question_id'],
+      },
+    },
+    {
+      name: 'mb_dashboard_tab_create',
+      description: 'Create a tab on an existing dashboard (PUT /api/dashboard/:id with a negative tab id). Existing tabs and cards are preserved. Returns the new tab id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          dashboard_id: {
+            type: 'number',
+            description: 'Dashboard ID',
+          },
+          name: {
+            type: 'string',
+            description: 'Tab name',
+          },
+        },
+        required: ['dashboard_id', 'name'],
       },
     },
     {
@@ -877,7 +917,8 @@ export function getToolDefinitions() {
                 size_x: { type: 'number', default: 4 },
                 size_y: { type: 'number', default: 4 },
                 visualization_settings: { type: 'object', description: 'Optional override settings' },
-                parameter_mappings: { type: 'array', description: 'Optional filter mappings' }
+                parameter_mappings: { type: 'array', description: 'Optional filter mappings' },
+                dashboard_tab_id: { type: 'number', description: 'Target dashboard tab id. Required when the dashboard has tabs.' }
               },
               required: ['card_id', 'row', 'col']
             }
@@ -902,7 +943,8 @@ export function getToolDefinitions() {
                 row: { type: 'number' },
                 col: { type: 'number' },
                 size_x: { type: 'number' },
-                size_y: { type: 'number' }
+                size_y: { type: 'number' },
+                dashboard_tab_id: { type: 'number', description: 'If set, update only the dashcard on this tab. Never sent as a SET unless you intend to move the card.' }
               },
               required: ['card_id']
             }
@@ -2333,7 +2375,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_collection_list',
-      description: 'List all collections with hierarchy and item counts',
+      description: 'List collections. With parent_id, returns descendants (not only direct children) so Dev 481 includes nested collections such as 407. Text and structuredContent include id, name, parent_id. Collection id may be a number or "root".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3065,7 +3107,7 @@ export function getToolDefinitions() {
     // ==================== DASHBOARD CRUD ====================
     {
       name: 'mb_dashboard_get',
-      description: 'Get detailed information about a dashboard',
+      description: 'Get detailed information about a dashboard, including tabs (id, name) and each dashcard with dashboard_tab_id, card_id, and name',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3111,7 +3153,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_dashboard_card_update',
-      description: 'Update card position and size on a dashboard',
+      description: 'Update card position and size on a dashboard. Omitting dashboard_tab_id keeps the card on its current tab.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3126,7 +3168,11 @@ export function getToolDefinitions() {
           row: { type: 'number', description: 'New row position' },
           col: { type: 'number', description: 'New column position' },
           size_x: { type: 'number', description: 'Width in grid units' },
-          size_y: { type: 'number', description: 'Height in grid units' }
+          size_y: { type: 'number', description: 'Height in grid units' },
+          dashboard_tab_id: {
+            type: 'number',
+            description: 'Move the dashcard to this tab. Omit to keep the current tab (position/size updates must not move cards between tabs by accident).',
+          }
         },
         required: ['dashboard_id', 'card_id']
       }

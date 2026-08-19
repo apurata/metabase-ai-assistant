@@ -1,6 +1,15 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../../utils/logger.js';
 import { assertWritableCollection } from '../write-guards.js';
+import {
+  applyDashcardLayoutUpdate,
+  buildAddCardPutBody,
+  buildCreateTabPutBody,
+  dashcardsOf,
+  resolveDashboardTabId,
+  serializeDashcardForPut,
+  serializeTabForPut,
+} from '../dashboard-layout.js';
 
 const DEFAULT_CARD_DATA_MAX_ROWS = 150;
 const NATIVE_QUERY_TEXT_MAX = 50000;
@@ -597,82 +606,73 @@ export class CardsHandler {
 
   async handleAddCardToDashboard(args) {
     try {
-      // Normalize position parameters (support both flat and nested structure)
-      // AI sometimes sends flat: { row: 0, col: 0, size_x: 4 }
-      // Or nested: { position: { row: 0, col: 0, sizeX: 4 } }
       let position = args.position || {};
-
-      // If args has direct position props, merge them
       if (args.row !== undefined) position.row = args.row;
       if (args.col !== undefined) position.col = args.col;
-
-      // Handle size_x vs sizeX and size_y vs sizeY
       if (args.size_x !== undefined) position.sizeX = args.size_x;
       if (args.size_y !== undefined) position.sizeY = args.size_y;
       if (args.sizeX !== undefined) position.sizeX = args.sizeX;
       if (args.sizeY !== undefined) position.sizeY = args.sizeY;
 
-      // Map back to format expected by client
-      // The client expects: Options object with optional row, col, sizeX, sizeY
-      // But we need to make sure we pass the right keys to client.addCardToDashboard
-
-      // Create a normalized options object for the client
-      const options = {
+      const dashboard = await this.metabaseClient.request('GET', `/api/dashboard/${args.dashboard_id}`);
+      const body = buildAddCardPutBody(dashboard, args.question_id, {
         row: position.row,
         col: position.col,
         sizeX: position.sizeX || position.size_x,
         sizeY: position.sizeY || position.size_y,
-        parameter_mappings: args.parameter_mappings || []
+        parameter_mappings: args.parameter_mappings || [],
+        dashboard_tab_id: args.dashboard_tab_id,
+      });
+      const updated = await this.metabaseClient.request('PUT', `/api/dashboard/${args.dashboard_id}`, body);
+      const cards = dashcardsOf(updated);
+      const placed = cards.filter((c) => c.card_id === args.question_id).at(-1);
+      const tabId = placed?.dashboard_tab_id ?? args.dashboard_tab_id ?? null;
+
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Card added to dashboard\n` +
+            `Dashboard: ${updated.name || args.dashboard_id}\n` +
+            `Question ID: ${args.question_id}\n` +
+            `dashboard_tab_id: ${tabId}\n` +
+            `Total cards: ${cards.length}`
+        }],
       };
-
-      const result = await this.metabaseClient.addCardToDashboard(
-        args.dashboard_id,
-        args.question_id,
-        options, // Pass normalized options instead of raw args
-        args.parameter_mappings // Double pass, just in case (client signature check needed)
-      );
-
-      // VERIFICATION: Check if card was actually added
-      try {
-        const dashboard = await this.metabaseClient.getDashboard(args.dashboard_id);
-        const cardExists = dashboard.ordered_cards?.some(c => c.card_id === args.question_id);
-        const cardCount = dashboard.ordered_cards?.length || 0;
-
-        if (cardExists) {
-          return {
-            content: [{
-              type: 'text',
-              text: `✅ Card verified!\\n` +
-                `Dashboard: ${dashboard.name} (ID: ${args.dashboard_id})\\n` +
-                `Total cards: ${cardCount}`
-            }],
-          };
-        } else {
-          return {
-            content: [{
-              type: 'text',
-              text: `⚠️ Card addition appears to have failed!\\n` +
-                `API reported success but card was not found on dashboard.\\n` +
-                `Dashboard ID: ${args.dashboard_id}, Question ID: ${args.question_id}\\n` +
-                `Please verify the question ID is valid.`
-            }],
-          };
-        }
-      } catch (verifyError) {
-        // Verification failed but original call might have succeeded
-        return {
-          content: [{
-            type: 'text',
-            text: `✅ Card added (verification unavailable)\\n` +
-              `Dashboard ID: ${args.dashboard_id}\\n` +
-              `Card ID: ${result?.id || 'N/A'}`
-          }],
-        };
-      }
-
     } catch (error) {
       return {
         content: [{ type: 'text', text: `❌ Card addition error: ${error.message}` }],
+      };
+    }
+  }
+
+  async handleDashboardTabCreate(args) {
+    const { dashboard_id, name } = args;
+    try {
+      const dashboard = await this.metabaseClient.request('GET', `/api/dashboard/${dashboard_id}`);
+      const body = buildCreateTabPutBody(dashboard, name);
+      const updated = await this.metabaseClient.request('PUT', `/api/dashboard/${dashboard_id}`, body);
+      const tabs = updated.tabs || [];
+      const created = [...tabs].reverse().find((t) => t.name === name) || tabs.at(-1);
+      const tabsText = tabs.map((t) => `    [${t.id}] ${t.name}`).join('\n');
+
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Tab created\n` +
+            `Dashboard: ${updated.name || dashboard_id}\n` +
+            `New tab: [${created?.id}] ${created?.name}\n` +
+            `Tabs (${tabs.length}):\n${tabsText || '    (none)'}`
+        }],
+        structuredContent: {
+          dashboard_id,
+          tab: created ? { id: created.id, name: created.name } : null,
+          tabs: tabs.map((t) => ({ id: t.id, name: t.name })),
+        },
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Dashboard tab create error: ${error.message}` }],
+        structuredContent: { dashboard_id, tab: null, tabs: [] },
       };
     }
   }
@@ -792,35 +792,34 @@ export class CardsHandler {
 
 
   async handleDashboardCardUpdate(args) {
-    const { dashboard_id, card_id, row, col, size_x, size_y } = args;
+    const { dashboard_id, card_id, row, col, size_x, size_y, dashboard_tab_id } = args;
 
     try {
-      // Get current dashboard
       const dashboard = await this.metabaseClient.request('GET', `/api/dashboard/${dashboard_id}`);
-      const cards = dashboard.dashcards || dashboard.ordered_cards || [];
-
-      // Find and update the card
+      const cards = dashcardsOf(dashboard);
       const cardToUpdate = cards.find(c => c.id === card_id);
       if (!cardToUpdate) {
         return { content: [{ type: 'text', text: `❌ Card ${card_id} not found on dashboard ${dashboard_id}` }] };
       }
 
-      const updatedCard = {
-        ...cardToUpdate,
-        ...(row !== undefined && { row }),
-        ...(col !== undefined && { col }),
-        ...(size_x !== undefined && { size_x }),
-        ...(size_y !== undefined && { size_y })
-      };
+      if (dashboard_tab_id !== undefined) {
+        resolveDashboardTabId(dashboard, dashboard_tab_id);
+      }
 
-      await this.metabaseClient.request('PUT', `/api/dashboard/${dashboard_id}/cards`, {
-        cards: cards.map(c => c.id === card_id ? updatedCard : c)
+      const updatedCard = applyDashcardLayoutUpdate(cardToUpdate, {
+        row, col, size_x, size_y, dashboard_tab_id,
+      });
+
+      await this.metabaseClient.request('PUT', `/api/dashboard/${dashboard_id}`, {
+        tabs: (dashboard.tabs || []).map(serializeTabForPut),
+        dashcards: cards.map(c => c.id === card_id ? updatedCard : serializeDashcardForPut(c)),
       });
 
       return {
         content: [{
           type: 'text',
-          text: `✅ Dashboard card ${card_id} position/size updated`
+          text: `✅ Dashboard card ${card_id} position/size updated` +
+            (dashboard_tab_id !== undefined ? `\ndashboard_tab_id: ${dashboard_tab_id}` : `\ndashboard_tab_id unchanged: ${cardToUpdate.dashboard_tab_id ?? 'none'}`)
         }]
       };
     } catch (error) {

@@ -2,6 +2,7 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../utils/config.js';
 import { sanitizeNumber, sanitizeString, sanitizeJson } from '../../utils/sql-sanitizer.js';
+import { resolveDashboardTabId } from '../dashboard-layout.js';
 
 /**
  * Handler for Direct SQL Dashboard Operations
@@ -34,6 +35,13 @@ export class DashboardDirectHandler {
 
         logger.info(`Adding ${cards.length} cards to dashboard ${safeDashboardId} via Direct SQL (DB: ${internalDbId})`);
 
+        let dashboard = null;
+        try {
+            dashboard = await this.metabaseClient.getDashboard(safeDashboardId);
+        } catch (e) {
+            logger.warn(`Could not load dashboard ${safeDashboardId} for tab resolution: ${e.message}`);
+        }
+
         for (const card of cards) {
             try {
                 const safeCardId = sanitizeNumber(card.card_id);
@@ -43,14 +51,19 @@ export class DashboardDirectHandler {
                 const sizeY = sanitizeNumber(card.size_y || 4);
                 const vizSettings = sanitizeJson(card.visualization_settings || {});
                 const paramMappings = sanitizeJson(card.parameter_mappings || []);
+                const tabId = dashboard
+                    ? resolveDashboardTabId(dashboard, card.dashboard_tab_id)
+                    : (card.dashboard_tab_id ?? null);
+                const tabSql = tabId == null ? 'NULL' : sanitizeNumber(tabId);
 
                 const sql = `
             INSERT INTO report_dashboardcard 
-            (card_id, dashboard_id, row, col, size_x, size_y, visualization_settings, parameter_mappings, created_at, updated_at)
+            (card_id, dashboard_id, dashboard_tab_id, row, col, size_x, size_y, visualization_settings, parameter_mappings, created_at, updated_at)
             VALUES 
             (
                 ${safeCardId}, 
                 ${safeDashboardId}, 
+                ${tabSql},
                 ${row}, 
                 ${col}, 
                 ${sizeX}, 
@@ -63,7 +76,7 @@ export class DashboardDirectHandler {
         `;
 
                 await this.metabaseClient.executeNativeQuery(internalDbId, sql, { enforcePrefix: false });
-                results.push(`✅ Card ${safeCardId} -> (${row}, ${col}) [${sizeX}x${sizeY}]`);
+                results.push(`✅ Card ${safeCardId} -> tab=${tabSql} (${row}, ${col}) [${sizeX}x${sizeY}]`);
 
             } catch (error) {
                 const msg = `❌ Failed Card ${card.card_id}: ${error.message}`;
@@ -122,10 +135,15 @@ export class DashboardDirectHandler {
 
                 setParts.push(`updated_at = NOW()`);
 
+                let where = `WHERE dashboard_id = ${safeDashboardId} AND card_id = ${safeCardId}`;
+                if (update.dashboard_tab_id !== undefined) {
+                    where += ` AND dashboard_tab_id = ${sanitizeNumber(update.dashboard_tab_id)}`;
+                }
+
                 const sql = `
             UPDATE report_dashboardcard
             SET ${setParts.join(', ')}
-            WHERE dashboard_id = ${safeDashboardId} AND card_id = ${safeCardId}
+            ${where}
         `;
 
                 await this.metabaseClient.executeNativeQuery(internalDbId, sql, { enforcePrefix: false });

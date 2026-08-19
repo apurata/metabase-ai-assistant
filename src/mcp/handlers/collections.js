@@ -1,5 +1,4 @@
-import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { logger } from '../../utils/logger.js';
+import { EMPTY_COLLECTION_LIST, summarizeCollections } from '../dashboard-layout.js';
 
 export class CollectionsHandler {
   constructor(metabaseClient) {
@@ -19,8 +18,6 @@ export class CollectionsHandler {
 
   async handleCollectionCreate(args) {
     try {
-      await this.ensureInitialized();
-
       const collectionData = {
         name: args.name,
         description: args.description || '',
@@ -62,44 +59,32 @@ export class CollectionsHandler {
 
   async handleCollectionList(args) {
     try {
-      await this.ensureInitialized();
-
-      let endpoint = '/api/collection';
-      if (args.parent_id) {
-        endpoint = `/api/collection/${args.parent_id}/items`;
-      }
-
       const collections = await this.metabaseClient.request('GET', '/api/collection');
-
-      let output = `📂 **Collections**\\n\\n`;
-
-      const rootCollections = collections.filter(c => !c.personal_owner_id);
-      rootCollections.slice(0, 20).forEach((col, i) => {
-        output += `${i + 1}. **${col.name}** (ID: ${col.id})\\n`;
-        if (col.description) output += `   ${col.description.substring(0, 50)}...\\n`;
+      const rows = summarizeCollections(collections, args.parent_id);
+      const parentLabel = args.parent_id == null ? 'all' : String(args.parent_id);
+      const scope = args.parent_id == null ? 'all' : `descendants of ${parentLabel}`;
+      let output = `📂 Collections (${scope}, ${rows.length})\n\n`;
+      rows.slice(0, 50).forEach((col, i) => {
+        output += `${i + 1}. [${col.id}] ${col.name}  parent_id=${col.parent_id ?? 'null'}\n`;
       });
-
-      output += `\\n📊 Total Collections: ${collections.length}`;
+      if (rows.length > 50) {
+        output += `… ${rows.length - 50} more\n`;
+      }
 
       return {
         content: [{ type: 'text', text: output }],
-        structuredContent: {
-          collections: rootCollections.map(c => ({ id: c.id, name: c.name })),
-          count: collections.length,
-        },
+        structuredContent: { collections: rows, count: rows.length },
       };
-
     } catch (error) {
       return {
-        content: [{ type: 'text', text: `❌ Collection list failed: ${error.message}` }]
+        content: [{ type: 'text', text: `❌ Collection list failed: ${error.message}` }],
+        structuredContent: EMPTY_COLLECTION_LIST,
       };
     }
   }
 
   async handleCollectionMove(args) {
     try {
-      await this.ensureInitialized();
-
       let endpoint;
       const updateData = { collection_id: args.target_collection_id };
 
@@ -139,7 +124,6 @@ export class CollectionsHandler {
   }
 
   async handleCollectionPermissionsGet(args) {
-    await this.ensureInitialized();
     const { collection_id } = args;
 
     try {
@@ -168,7 +152,6 @@ export class CollectionsHandler {
   }
 
   async handleCollectionPermissionsUpdate(args) {
-    await this.ensureInitialized();
     const { collection_id, group_id, permission } = args;
 
     try {
@@ -196,7 +179,6 @@ export class CollectionsHandler {
   }
 
   async handleCollectionCopy(args) {
-    await this.ensureInitialized();
     const { collection_id, destination_id, new_name } = args;
 
     try {
