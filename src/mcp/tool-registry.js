@@ -224,6 +224,7 @@ const TOOL_METADATA = {
   mb_dashboard_get: {
     title: 'Get Dashboard', outputSchema: {
       type: 'object',
+      additionalProperties: true,
       properties: {
         id: { type: 'number' }, name: { type: 'string' },
         // Metabase stores missing dashboard copy as JSON null, not "".

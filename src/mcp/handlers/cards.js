@@ -738,7 +738,19 @@ export class CardsHandler {
         },
       };
     } catch (error) {
-      return { content: [{ type: 'text', text: `❌ Dashboard get error: ${error.message}` }] };
+      // Cursor rejects tools that declare outputSchema but omit structuredContent (-32600).
+      return {
+        content: [{ type: 'text', text: `❌ Dashboard get error: ${error.message}` }],
+        structuredContent: {
+          id: dashboard_id ?? 0,
+          name: '',
+          description: '',
+          collection_id: null,
+          tabs: [],
+          cards: [],
+          parameters: [],
+        },
+      };
     }
   }
 
