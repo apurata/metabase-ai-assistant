@@ -2,6 +2,15 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../../utils/logger.js';
 import { assertWritableCollection } from '../write-guards.js';
 import {
+  castDidNotApply,
+  coercionRefusal,
+  formatFieldMetadataText,
+  formatTableMetadataText,
+  fieldStructured,
+  filterTableFields,
+  tableStructured,
+} from '../field-coercion.js';
+import {
   applyDashcardLayoutUpdate,
   buildAddCardPutBody,
   buildCreateTabPutBody,
@@ -1194,104 +1203,108 @@ export class CardsHandler {
   // === FIELD METADATA HANDLERS ===
 
   async handleFieldMetadata(args) {
+    const fieldId = args.field_id;
     try {
-      const fieldId = args.field_id;
-
-      // Get current field
       const field = await this.metabaseClient.request('GET', `/api/field/${fieldId}`);
-
-      // If updating
-      if (args.display_name || args.description || args.semantic_type || args.visibility_type || args.has_field_values) {
-        const updateData = {};
-        if (args.display_name) updateData.display_name = args.display_name;
-        if (args.description) updateData.description = args.description;
-        if (args.semantic_type) updateData.semantic_type = args.semantic_type;
-        if (args.visibility_type) updateData.visibility_type = args.visibility_type;
-        if (args.has_field_values) updateData.has_field_values = args.has_field_values;
-
-        const updated = await this.metabaseClient.request('PUT', `/api/field/${fieldId}`, updateData);
-
+      const updating = Boolean(
+        args.display_name || args.description || args.semantic_type ||
+        args.visibility_type || args.has_field_values || args.coercion_strategy
+      );
+      if (!updating) {
+        const snap = fieldStructured(field);
         return {
-          content: [{
-            type: 'text',
-            text: `✅ **Field Metadata Updated!**\\n\\n` +
-              `🆔 Field ID: ${fieldId}\\n` +
-              `📋 Display Name: ${updated.display_name}\\n` +
-              `🏷️ Semantic Type: ${updated.semantic_type || 'None'}\\n` +
-              `👁️ Visibility: ${updated.visibility_type}`
-          }]
+          content: [{ type: 'text', text: formatFieldMetadataText(snap) }],
+          structuredContent: snap,
         };
       }
 
-      // Return current metadata
-      return {
-        content: [{
-          type: 'text',
-          text: `📋 **Field Metadata: ${field.display_name}**\\n\\n` +
-            `🆔 Field ID: ${fieldId}\\n` +
-            `📛 Name: ${field.name}\\n` +
-            `📋 Display Name: ${field.display_name}\\n` +
-            `📝 Description: ${field.description || 'None'}\\n` +
-            `🏷️ Semantic Type: ${field.semantic_type || 'None'}\\n` +
-            `📊 Base Type: ${field.base_type}\\n` +
-            `👁️ Visibility: ${field.visibility_type}\\n` +
-            `🔍 Has Field Values: ${field.has_field_values}`
-        }]
-      };
+      if (args.coercion_strategy) {
+        const refusal = coercionRefusal(field.base_type, args.coercion_strategy);
+        if (refusal) {
+          const snap = fieldStructured(field, { error: refusal });
+          return {
+            content: [{ type: 'text', text: formatFieldMetadataText(snap) }],
+            structuredContent: snap,
+          };
+        }
+      }
 
-    } catch (error) {
+      const updateData = {};
+      if (args.display_name) updateData.display_name = args.display_name;
+      if (args.description) updateData.description = args.description;
+      if (args.semantic_type) updateData.semantic_type = args.semantic_type;
+      if (args.visibility_type) updateData.visibility_type = args.visibility_type;
+      if (args.has_field_values) updateData.has_field_values = args.has_field_values;
+      if (args.coercion_strategy) updateData.coercion_strategy = args.coercion_strategy;
+
+      const updated = await this.metabaseClient.request('PUT', `/api/field/${fieldId}`, updateData);
+      if (args.coercion_strategy) {
+        const stuck = castDidNotApply(updated, args.coercion_strategy);
+        if (stuck) {
+          const snap = fieldStructured(updated, { error: stuck });
+          return {
+            content: [{ type: 'text', text: formatFieldMetadataText(snap) }],
+            structuredContent: snap,
+          };
+        }
+      }
+
+      const snap = fieldStructured(updated, { updated: true });
       return {
-        content: [{ type: 'text', text: `❌ Field metadata error: ${error.message}` }]
+        content: [{ type: 'text', text: formatFieldMetadataText(snap) }],
+        structuredContent: snap,
+      };
+    } catch (error) {
+      const snap = fieldStructured(null, { fieldId, error: error.message });
+      return {
+        content: [{ type: 'text', text: `❌ Field metadata error: ${error.message}` }],
+        structuredContent: snap,
       };
     }
   }
 
 
   async handleTableMetadata(args) {
+    const tableId = args.table_id;
     try {
-      const tableId = args.table_id;
-
-      // Get current table
       const table = await this.metabaseClient.request('GET', `/api/table/${tableId}`);
-
-      // If updating
-      if (args.display_name || args.description || args.visibility_type) {
+      const updating = Boolean(args.display_name || args.description || args.visibility_type);
+      if (updating) {
         const updateData = {};
         if (args.display_name) updateData.display_name = args.display_name;
         if (args.description) updateData.description = args.description;
         if (args.visibility_type) updateData.visibility_type = args.visibility_type;
 
         const updated = await this.metabaseClient.request('PUT', `/api/table/${tableId}`, updateData);
-
+        const snap = tableStructured(updated, [], { updated: true, tableId });
         return {
-          content: [{
-            type: 'text',
-            text: `✅ **Table Metadata Updated!**\\n\\n` +
-              `🆔 Table ID: ${tableId}\\n` +
-              `📋 Display Name: ${updated.display_name}\\n` +
-              `👁️ Visibility: ${updated.visibility_type}`
-          }]
+          content: [{ type: 'text', text: formatTableMetadataText(snap) }],
+          structuredContent: snap,
         };
       }
 
-      // Return current metadata
-      return {
-        content: [{
-          type: 'text',
-          text: `📋 **Table Metadata: ${table.display_name}**\\n\\n` +
-            `🆔 Table ID: ${tableId}\\n` +
-            `📛 Name: ${table.name}\\n` +
-            `📋 Display Name: ${table.display_name}\\n` +
-            `📝 Description: ${table.description || 'None'}\\n` +
-            `👁️ Visibility: ${table.visibility_type}\\n` +
-            `🗃️ Schema: ${table.schema}\\n` +
-            `📊 Fields: ${table.fields?.length || 0}`
-        }]
-      };
+      let fields = Array.isArray(table.fields) ? table.fields : [];
+      let fieldsError = null;
+      if (fields.length === 0) {
+        try {
+          const loaded = await this.metabaseClient.getTableFields(tableId);
+          fields = Array.isArray(loaded) ? loaded : [];
+        } catch (error) {
+          fieldsError = `Could not list fields: ${error.message}`;
+        }
+      }
+      if (args.field_name) fields = filterTableFields(fields, args.field_name);
 
-    } catch (error) {
+      const snap = tableStructured(table, fields, { error: fieldsError, tableId });
       return {
-        content: [{ type: 'text', text: `❌ Table metadata error: ${error.message}` }]
+        content: [{ type: 'text', text: formatTableMetadataText(snap) }],
+        structuredContent: snap,
+      };
+    } catch (error) {
+      const snap = tableStructured(null, [], { error: error.message, tableId });
+      return {
+        content: [{ type: 'text', text: `❌ Table metadata error: ${error.message}` }],
+        structuredContent: snap,
       };
     }
   }
