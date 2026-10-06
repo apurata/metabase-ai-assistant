@@ -1,3 +1,61 @@
+import { COERCION_STRATEGY_NAMES } from './field-coercion.js';
+
+const FIELD_METADATA_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    field_id: { type: 'number' },
+    name: { type: 'string' },
+    display_name: { type: 'string' },
+    description: { type: ['string', 'null'] },
+    base_type: { type: 'string' },
+    effective_type: { type: 'string' },
+    database_type: { type: ['string', 'null'] },
+    coercion_strategy: { type: ['string', 'null'] },
+    semantic_type: { type: ['string', 'null'] },
+    visibility_type: { type: 'string' },
+    has_field_values: { type: ['string', 'null'] },
+    castable: { type: 'boolean' },
+    updated: { type: 'boolean' },
+    error: { type: ['string', 'null'] },
+  },
+  required: ['field_id', 'name', 'base_type', 'effective_type', 'castable', 'updated'],
+};
+
+const TABLE_METADATA_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    table_id: { type: 'number' },
+    name: { type: 'string' },
+    display_name: { type: 'string' },
+    description: { type: ['string', 'null'] },
+    visibility_type: { type: 'string' },
+    schema: { type: ['string', 'null'] },
+    field_count: { type: 'number' },
+    fields: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          id: { type: 'number' },
+          name: { type: 'string' },
+          display_name: { type: 'string' },
+          base_type: { type: 'string' },
+          effective_type: { type: 'string' },
+          database_type: { type: ['string', 'null'] },
+          coercion_strategy: { type: ['string', 'null'] },
+        },
+        required: ['id', 'name', 'base_type', 'effective_type'],
+      },
+    },
+    updated: { type: 'boolean' },
+    error: { type: ['string', 'null'] },
+  },
+  required: ['table_id', 'name', 'field_count', 'fields', 'updated'],
+};
+
 /**
  * Tool Registry - All MCP tool definitions
  * Extracted from server.js for modularity
@@ -329,8 +387,14 @@ const TOOL_METADATA = {
   mb_pulse_create: { title: 'Create Pulse', write: true, destructive: false, idempotent: false },
 
   // ── Field & Table Metadata ──
-  mb_field_metadata: { title: 'Get/Update Field Metadata', write: true, destructive: false, idempotent: true },
-  mb_table_metadata: { title: 'Get/Update Table Metadata', write: true, destructive: false, idempotent: true },
+  mb_field_metadata: {
+    title: 'Get/Update Field Metadata', write: true, destructive: false, idempotent: true,
+    outputSchema: FIELD_METADATA_OUTPUT_SCHEMA,
+  },
+  mb_table_metadata: {
+    title: 'Get/Update Table Metadata', write: true, destructive: false, idempotent: true,
+    outputSchema: TABLE_METADATA_OUTPUT_SCHEMA,
+  },
   mb_field_values: { title: 'Get Field Values' },
 
   // ── Embedding ──
@@ -2624,7 +2688,7 @@ export function getToolDefinitions() {
     // === FIELD METADATA & SEMANTIC TYPES ===
     {
       name: 'mb_field_metadata',
-      description: 'Get or update field metadata including display name, description, and semantic type',
+      description: 'Get or update field metadata. GET returns base_type, effective_type, database_type, and coercion_strategy. PUT coercion_strategy applies an Admin cast (semantic_type does not). base_type type/* cannot be cast. Sync often leaves All Lend Metabase as type/*; use Funded or native (DEV-612 / DEV-689).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2652,7 +2716,12 @@ export function getToolDefinitions() {
               'type/Category', 'type/Comment', 'type/SerializedJSON',
               'type/Product', 'type/User', 'type/Company'
             ],
-            description: 'Semantic type for the field'
+            description: 'Semantic type label. Does not cast the column or change filter widgets.'
+          },
+          coercion_strategy: {
+            type: 'string',
+            enum: COERCION_STRATEGY_NAMES,
+            description: 'Admin cast (Cast to a specific data type). Refused when base_type is type/*. Bytes casts are not offered.'
           },
           visibility_type: {
             type: 'string',
@@ -2670,7 +2739,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_table_metadata',
-      description: 'Get or update table metadata including display name, description, and visibility',
+      description: 'Get or update table metadata. GET lists fields (id, name, base_type, coercion_strategy) via /api/table/:id/query_metadata when /api/table returns none. Pass field_name to return only matching columns.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2690,6 +2759,10 @@ export function getToolDefinitions() {
             type: 'string',
             enum: ['visible', 'hidden', 'technical', 'cruft'],
             description: 'Table visibility type'
+          },
+          field_name: {
+            type: 'string',
+            description: 'GET only: case-insensitive substring of field name or display name'
           }
         },
         required: ['table_id']
