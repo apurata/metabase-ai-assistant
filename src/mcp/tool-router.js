@@ -9,18 +9,22 @@ import { logger } from '../utils/logger.js';
  * Tools that perform write/mutate operations.
  * These are blocked when METABASE_READ_ONLY_MODE is active.
  */
-const WRITE_TOOLS = new Set([
+export const WRITE_TOOLS = new Set([
     // SQL write
     'sql_execute', // checked inline for DML
+    'sql_submit',
+    'sql_cancel',
     // DDL operations
     'db_table_create', 'db_view_create', 'db_matview_create', 'db_index_create', 'db_ai_drop',
     // Card/Question mutations
     'mb_question_create', 'mb_question_create_parametric', 'mb_card_update', 'mb_card_delete', 'mb_card_archive',
+    'mb_auto_describe',
     // Dashboard mutations
     'mb_dashboard_create', 'mb_dashboard_update', 'mb_dashboard_delete',
     'mb_dashboard_add_card', 'mb_dashboard_tab_create', 'mb_dashboard_add_card_sql', 'mb_dashboard_update_layout',
     'mb_dashboard_card_update', 'mb_dashboard_card_remove', 'mb_dashboard_add_filter',
     'mb_dashboard_layout_optimize', 'mb_dashboard_template_executive',
+    'ai_dashboard_build_full', 'dbt_build_dashboard_from_yaml',
     // Direct SQL dashboard
     'mb_create_parametric_question', 'mb_link_dashboard_filter',
     // Collection mutations

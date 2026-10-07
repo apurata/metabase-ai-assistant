@@ -6,35 +6,134 @@ MCP server for Metabase: SQL execution, questions, dashboards, metadata, and AI-
 
 - **Use branch for Cursor / internal:** [`apurata`](./BRANCHING.md) (not bare `main`).
 - **Branching strategy:** see **[BRANCHING.md](./BRANCHING.md)** — `main` tracks upstream; features branch from `main` for upstream PRs; merge into `apurata` for internal use.
+- **Synced upstream:** `v5.3.0` (security dependency updates + Metabase v0.50–v0.61+ compatibility). Apurata deltas kept: write collection allowlist, native Mongo card writes, dashboard tabs, Admin field casts, Cursor `structuredContent` fixes.
 
 ## Changes on `apurata` (vs `main`)
 
-Estamos optimizando este MCP para **apurarlo** — menos latencia, respuestas más livianas y menos round-trips. Los cambios de `apurata` (antes en `fix/read-only-enforcement-and-card-query`) son el primer paso; el trabajo de performance sigue en curso.
+| Área | Ahora (`apurata`) |
+|------|-------------------|
+| **`mb_card_get`** | Includes **`dataset_query`** (SQL/MBQL/Mongo native) in text + structuredContent |
+| **`mb_card_data`** | Up to **`max_rows`** (default **150**); optional PII masking; `ignore_cache` |
+| **Writes** | Optional **`METABASE_WRITABLE_COLLECTION_IDS`** allowlist (`write-guards.js`) |
+| **Native Mongo** | `mb_card_update` supports `native_query` + `mongo_collection` + `template_tags` |
+| **Dashboards** | `mb_dashboard_tab_create`, `dashboard_tab_id` on add-card; null-safe description |
+| **Admin** | Field cast tools (`field-coercion.js`) |
 
-| Área | Antes (`main`) | Ahora (`apurata`) |
-|------|----------------|-------------------|
-| **`mb_card_get` — `structuredContent`** | Metadatos básicos de la card | Incluye **`dataset_query`** (SQL nativo o MBQL) sin llamadas extra |
-| **`mb_card_get` — texto** | Sin resumen de query | Incluye resumen corto de **`dataset_query`** (classic + MBQL `lib/type`/stages + Mongo native; Cursor no siempre expone structuredContent) |
-| **`mb_card_get` — `outputSchema`** | `description` y `collection_id` solo como string/number | Tipos **nullable** alineados con Metabase |
-| **`mb_card_get` — schema JSON** | Propiedades fijas | `additionalProperties: true` |
-| **`mb_card_data`** | Truncaba siempre a **10** filas | Devuelve hasta **`max_rows`** (default **150**); si hay más → `truncated: true` + `row_count` |
-| **Handler `cards.js`** | `description \|\| null`, `collection_id \|\| null` | **`?? null`** para distinguir vacío de `null` real |
-
-**Por qué importa:** en modo read-only, un agente puede leer el SQL/MBQL/pipeline Mongo de una pregunta existente desde `mb_card_get` sin herramientas de escritura ni parsear texto plano, y agregar filas de cards CSO vía `mb_card_data` sin truncar a 10.
-
-Archivos: `src/mcp/handlers/cards.js`, `src/mcp/tool-registry.js`
+Archivos clave: `src/mcp/handlers/cards.js`, `src/mcp/tool-registry.js`, `src/mcp/write-guards.js`, `src/mcp/dashboard-layout.js`, `src/mcp/field-coercion.js`
 
 ---
 
-## Quick Start
+## Upstream package
 
-### One-Line Install
+This fork tracks [enessari/metabase-ai-assistant](https://github.com/enessari/metabase-ai-assistant) / npm `metabase-ai-assistant` **v5.3.0** (152 tools, including dbt/semantic helpers that Apurata does not use day-to-day). Full upstream docs follow.
+
+## 🌍 Language Versions / Dil Seçenekleri / 语言版本 / النسخ اللغوية
+
+- 🇬🇧 **[English (Main Documentation)](README.md)**
+- 🇹🇷 **[Türkçe Dokümantasyon](README_TR.md)**
+- 🇨🇳 **[中文文档 (Chinese)](README_ZH.md)**
+- 🇸🇦 **[التوثيق باللغة العربية (Arabic)](README_AR.md)**
+
+---
+
+## Table of Contents
+
+- [Core Architectural Highlights](#core-architectural-highlights)
+- [Next-Gen Autonomous Features (v5.3)](#next-gen-autonomous-features-v53)
+- [Metabase Version Compatibility](#metabase-version-compatibility)
+- [Quick Start & Installation](#quick-start--installation)
+- [Client Configuration & Desktop Setup](#client-configuration--desktop-setup)
+  - [Claude Desktop (One-Click DXT & JSON)](#1-claude-desktop)
+  - [Cursor IDE, Windsurf & VS Code](#2-cursor-ide-windsurf--vs-code)
+  - [ChatGPT Custom GPTs & Actions](#3-chatgpt-custom-gpts--actions)
+  - [Google Gemini & AI Studio](#4-google-gemini--google-ai-studio)
+  - [Google Antigravity SDK & MCP](#5-google-antigravity-sdk--mcp)
+- [Tool Categories Overview (152 Tools)](#tool-categories-overview-152-tools)
+- [Testing & Quality Assurance](#testing--quality-assurance)
+- [Project Roadmap & Upcoming Features](ROADMAP.md)
+- [License](#license)
+
+---
+
+## Core Architectural Highlights
+
+Metabase AI Assistant transforms standard AI interfaces (Claude Desktop, Cursor, VS Code, ChatGPT, Gemini, automated agent frameworks) into full-fledged Metabase power users:
+
+1. **dbt Deep Scanning & MetricFlow Integration (`dbt_project_scan_deep`)**: 9-tier architectural classification, `doc('...')` resolution, and `catalog.json` table/column profiling.
+2. **Cube.js Multi-Hop Lineage Joins (`dbt_lineage_joins_graph`)**: Resolves shortest join paths via Dijkstra Min-Heap algorithms with 3-color DAG cycle detection.
+3. **Cube.js Pre-Aggregation & Rollup Advisor (`dbt_semantic_preagg_advisor`)**: Generates multi-dialect Materialized View DDLs (Postgres, BigQuery, Snowflake, ClickHouse, DuckDB, Redshift, MySQL) with HyperLogLog distinct counts.
+4. **Lightdash Code-as-BI Dashboard Builder (`dbt_build_dashboard_from_yaml`)**: Translates `meta.metabase` and `meta.lightdash` formatting options into collision-free 24-column Metabase Dashboards.
+5. **Omni.co Controlled Semantic-to-YAML Exporter (`dbt_semantic_export_yaml`)**: Serializes approved business rules into clean dbt `schema.yml` / `semantic_models.yml` code blocks.
+6. **Autonomous Self-Healing SQL Engine (`ai_sql_execute_and_heal`)**: 3-iteration automated error-recovery loop for resilient querying.
+7. **Zero-Leak Enterprise PII Masker**: Real-time sanitization of emails, phone numbers, national IDs, credit cards, IP addresses, and tokens.
+
+---
+
+## Next-Gen Autonomous Features (v5.1)
+
+### 1. dbt Architectural Hierarchy & Source Prioritization
+$$\mathbf{Gold\;Marts\;(fct\_,\;dim\_,\;rpt\_)} \;\gg\; \mathbf{Silver\;(int\_)} \;\gg\; \mathbf{Bronze\;Staging\;(stg\_)}$$
+- `dbt_inspect_models`: Parses dbt `manifest.json` and MetricFlow semantic models.
+- `dbt_prioritize_sources`: Dynamically routes natural language questions to pre-aggregated, tested dimensional and fact tables.
+
+### 2. Governance-First Semantic Memory (No Silent Learning, No Hard-Deletes)
+- `semantic_memory_propose`: Proposes a business rule in `PENDING_APPROVAL` status.
+- `semantic_memory_approve`: Explicitly activates the rule with required data steward comments.
+- `semantic_memory_deprecate`: Safely soft-archives rules with mandatory audit reasons (`DEPRECATED`).
+- `semantic_memory_restore`: Instantly restores archived rules.
+- `semantic_memory_list`: Lists all rules with complete audit history and timestamps.
+
+### 3. Autonomous Self-Healing SQL Engine (`ai_sql_execute_and_heal`)
+- Catches syntax errors, Levenshtein-distance column misspellings, missing `GROUP BY` clauses, and dialect quirks across Postgres, MySQL, BigQuery, Snowflake, and SQLite.
+- Preserves fix history in `_provenance.healing_trail`.
+
+---
+
+## Metabase Version Compatibility
+
+Metabase AI Assistant provides backward and forward compatibility across all major Metabase architectures:
+
+| Metabase Version Range | Compatibility Level | Key Features Supported |
+|---|:---:|---|
+| **Metabase v0.55 – v0.61+** *(Current)* | **Full Support** | Modern MBQL 5 format (`stages`, `lib/type`), `/api/upload/csv`, updated collection permissions, multi-tab dashboards |
+| **Metabase v0.50 – v0.54** | **Full Support** | Collection tree hierarchies (`/api/collection/tree`), Model cards, API Key auth (`x-api-key`), sequential parametric queries |
+| **Metabase v0.43 – v0.49** | **Full Support** | Session token authentication (`X-Metabase-Session`), legacy MBQL query pipelines, database introspection |
+| **Metabase Open Source & Enterprise** | **Full Support** | Automatic feature detection (whitelabeling, audit logs, granular data permissions) |
+
+---
+
+## Quick Start & Installation
+
+### Global Execution via NPX
 
 ```bash
 npx metabase-ai-assistant
 ```
 
-### Add to Claude Desktop / Cursor
+### Manual Installation via NPM
+
+```bash
+npm install -g metabase-ai-assistant
+```
+
+---
+
+## Client Configuration & Desktop Setup
+
+### 1. Claude Desktop
+
+#### Option A: One-Click Extension (DXT / MCPB)
+1. Open **Claude Desktop Settings** -> **Developer / Extensions** -> **Install Local Extension**.
+2. Select this repository folder.
+3. Or install via Smithery CLI:
+   ```bash
+   npx -y @smithery/cli install metabase-ai-assistant --client claude
+   ```
+
+#### Option B: Manual JSON Configuration
+Add the server definition to `claude_desktop_config.json`:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -43,269 +142,96 @@ npx metabase-ai-assistant
       "command": "npx",
       "args": ["-y", "metabase-ai-assistant"],
       "env": {
-        "METABASE_URL": "https://your-metabase.com",
-        "METABASE_API_KEY": "mb_your_api_key"
+        "METABASE_URL": "https://your-metabase-instance.com",
+        "METABASE_API_KEY": "mb_your_api_key_here",
+        "METABASE_READ_ONLY_MODE": "true"
       }
     }
   }
 }
 ```
 
-That's it. Your AI assistant can use Metabase through MCP.
+### 2. Cursor IDE, Windsurf & VS Code
+
+Add to `.cursor/mcp.json` or VS Code MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "metabase": {
+      "command": "npx",
+      "args": ["-y", "metabase-ai-assistant"],
+      "env": {
+        "METABASE_URL": "https://your-metabase-instance.com",
+        "METABASE_API_KEY": "mb_your_api_key_here",
+        "METABASE_READ_ONLY_MODE": "true"
+      }
+    }
+  }
+}
+```
+
+### 3. ChatGPT Custom GPTs & Actions
+
+Expose Metabase AI Assistant as an OpenAPI Action for ChatGPT Plus / Team / Enterprise:
+1. Start the Remote SSE/HTTP server: `npm run start:sse`
+2. In ChatGPT, create a **Custom GPT** -> **Actions** -> **Import from URL**: `https://your-domain.com/tools/openapi.json`
+3. Detailed setup guide: [docs/integrations/CHATGPT_ACTIONS_GUIDE.md](docs/integrations/CHATGPT_ACTIONS_GUIDE.md)
+
+### 4. Google Gemini & Google AI Studio
+
+Pass tool definitions to Gemini Function Calling SDKs (`@google/genai` or `google-generativeai`):
+- Detailed setup guide: [docs/integrations/GOOGLE_GEMINI_GUIDE.md](docs/integrations/GOOGLE_GEMINI_GUIDE.md)
+
+### 5. Cloudflare Workers (Serverless Edge)
+
+Deploy directly to Cloudflare's edge network for free:
+```bash
+cd deploy/cloudflare
+npx wrangler deploy
+```
 
 ---
 
-## Examples
+## Tool Categories Overview (143 Tools)
 
-### Natural language to SQL
+The 143 MCP tools are categorized into 10 operational domains:
 
-```
-You: "Show me total revenue by product category for the last 30 days"
-AI: Uses ai_sql_generate → Runs query → Returns formatted results
-```
-
-### Dashboard creation
-
-```
-You: "Create an executive dashboard for our e-commerce sales"
-AI: Uses mb_dashboard_template_executive → Creates fully configured dashboard
-```
-
-### Database exploration
-
-```
-You: "What tables are related to 'orders' and show their relationships"
-AI: Uses db_relationships_detect → Returns complete ER diagram info
-```
-
-### Read-only mode
-
-```
-You: "DROP TABLE users"
-AI: Blocked — read-only mode active
-```
+1. **dbt & Semantic Layer (6 tools)**: Model hierarchy inspection, lineage resolution, source prioritization, governance-first business memory (propose, approve, soft-deprecate, restore).
+2. **Autonomous AI BI Operations (4 tools)**: Self-healing SQL engine, end-to-end dashboard architect, query index advisor, proactive anomaly detector.
+3. **SQL & Query Execution (14 tools)**: Direct SQL queries, async execution jobs, query status tracking, pagination, and speed benchmarks.
+4. **AI Query Intelligence (6 tools)**: Natural language to SQL, query performance optimizer, query explainer, automated table description.
+5. **Cards & Visualizations (34 tools)**: Question creation, query execution, parametric filtering, card cloning, visualization settings.
+6. **Dashboards & Layouts (22 tools)**: Dashboard creation, grid placement, filter linking, tab management, executive templates.
+7. **Collections & Organization (8 tools)**: Collection tree traversal, hierarchical moves, permission graphs, item listing.
+8. **Schema & Data Modeling (18 tools)**: Schema retrieval, foreign key inference, data profiling, table definitions.
+9. **User & Permission Administration (12 tools)**: User invitations, group assignments, membership controls, status toggling.
+10. **Actions & Documentation (19 tools)**: Metabase actions execution, pulses, alerts, webhooks, metrics, segment definitions, workspace migration.
 
 ---
 
-## Tool list (134)
+## Testing & Quality Assurance
 
-134 tools with MCP annotations. 16 priority tools support `outputSchema` + `structuredContent`.
-
-<details>
-<summary><b>Database operations (25 tools)</b></summary>
-
-| Tool | Description |
-|------|-------------|
-| `db_list` | List all databases |
-| `db_schemas` | Get schemas in a database |
-| `db_tables` | Get tables with fields |
-| `sql_execute` | Execute SQL queries |
-| `db_table_create` | Create tables (AI-prefixed) |
-| `db_view_create` | Create views |
-| `db_matview_create` | Create materialized views |
-| `db_index_create` | Create indexes |
-| `db_vacuum_analyze` | VACUUM and ANALYZE |
-| `db_query_explain` | EXPLAIN query plans |
-| `db_table_stats` | Table statistics |
-| `db_index_usage` | Index usage analysis |
-| `db_schema_explore` | Fast schema exploration |
-| `db_schema_analyze` | Deep schema analysis |
-| `db_relationships_detect` | Detect foreign keys |
-| ...and more |
-
-</details>
-
-<details>
-<summary><b>AI features (5 tools)</b></summary>
-
-| Tool | Description |
-|------|-------------|
-| `ai_sql_generate` | Natural language → SQL |
-| `ai_sql_optimize` | Query optimization suggestions |
-| `ai_sql_explain` | Explain SQL in plain English |
-| `ai_relationships_suggest` | Suggest table relationships |
-| `mb_auto_describe` | Auto-generate descriptions |
-
-</details>
-
-<details>
-<summary><b>Question/card management (12 tools)</b></summary>
-
-| Tool | Description |
-|------|-------------|
-| `mb_question_create` | Create new questions |
-| `mb_questions` | List all questions |
-| `mb_question_create_parametric` | Parametric questions |
-| `mb_card_get` | Get card details (includes `dataset_query` on this branch) |
-| `mb_card_update` | Update cards |
-| `mb_card_delete` | Delete cards |
-| `mb_card_archive` | Archive cards |
-| `mb_card_data` | Get card data as JSON |
-| `mb_card_copy` | Copy cards |
-| `mb_card_clone` | Clone cards |
-| ...and more |
-
-</details>
-
-<details>
-<summary><b>Dashboard management (14 tools)</b></summary>
-
-| Tool | Description |
-|------|-------------|
-| `mb_dashboard_create` | Create dashboards |
-| `mb_dashboards` | List all dashboards |
-| `mb_dashboard_get` | Get dashboard details |
-| `mb_dashboard_update` | Update dashboards |
-| `mb_dashboard_delete` | Delete dashboards |
-| `mb_dashboard_add_card` | Add cards to dashboard |
-| `mb_dashboard_add_filter` | Add filters |
-| `mb_dashboard_layout_optimize` | Optimize layout |
-| `mb_dashboard_template_executive` | Executive templates |
-| ...and more |
-
-</details>
-
-<details>
-<summary><b>User and permission management (10 tools)</b></summary>
-
-| Tool | Description |
-|------|-------------|
-| `mb_user_list` | List users |
-| `mb_user_get` | Get user details |
-| `mb_user_create` | Create users |
-| `mb_user_update` | Update users |
-| `mb_user_disable` | Disable users |
-| `mb_permission_group_list` | List groups |
-| `mb_permission_group_create` | Create groups |
-| ...and more |
-
-</details>
-
-<details>
-<summary><b>Metadata analytics (14 tools)</b></summary>
-
-| Tool | Description |
-|------|-------------|
-| `mb_meta_overview` | Instance health check |
-| `mb_meta_query_performance` | Query analytics |
-| `mb_meta_content_usage` | Content usage stats |
-| `mb_meta_user_activity` | User activity |
-| `mb_meta_table_dependencies` | Table dependencies |
-| `mb_meta_impact_analysis` | Breaking change analysis |
-| `mb_meta_optimization_recommendations` | Index suggestions |
-| `mb_meta_export_workspace` | Backup to JSON |
-| `mb_meta_import_preview` | Import dry-run |
-| `mb_meta_compare_environments` | Dev vs Prod diff |
-| `mb_meta_auto_cleanup` | Safe cleanup |
-| ...and more |
-
-</details>
-
----
-
-## Security
-
-| Feature | Description |
-|---------|-------------|
-| Read-only mode | Blocks INSERT, UPDATE, DELETE, DROP (default: enabled) |
-| AI prefix | AI-created objects use `claude_ai_` prefix |
-| Explicit approval | Destructive operations require confirmation |
-| Activity logging | Audit trail of operations |
-| Env validation | Zod-validated environment variables |
+Backed by an automated multi-tier test suite covering unit logic, integration workflows, and security fuzzing:
 
 ```bash
-# Enable/disable read-only mode
-METABASE_READ_ONLY_MODE=true  # Default: blocks write ops
-METABASE_READ_ONLY_MODE=false # Allow write operations
+# Run complete test suite (32 suites, 583 tests)
+npm test
+
+# Run unit tests
+npm run test:unit
+
+# Run integration workflows
+npm run test:integration
+
+# Run security & PII zero-leak fuzzing tests
+npm run test:security
 ```
-
----
-
-## Configuration
-
-Create a `.env` file:
-
-```bash
-# Required
-METABASE_URL=https://your-metabase.com
-METABASE_API_KEY=mb_your_api_key
-
-# Or use username/password
-# METABASE_USERNAME=admin@example.com
-# METABASE_PASSWORD=your_password
-
-# Security (defaults to true)
-METABASE_READ_ONLY_MODE=true
-
-# AI Features (optional)
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-
-# Performance (optional)
-CACHE_TTL_MS=600000  # 10 minutes
-```
-
----
-
-## Installation
-
-### npm (Recommended)
-
-```bash
-npm install -g metabase-ai-assistant
-```
-
-### Docker
-
-```bash
-docker run -e METABASE_URL=... -e METABASE_API_KEY=... metabase-ai-assistant
-```
-
-### From Source
-
-```bash
-git clone <repo-url>
-cd metabase-ai-assistant
-npm install
-npm run mcp
-```
-
----
-
-## Architecture
-
-```
-metabase-ai-assistant/
-├── src/
-│   ├── mcp/
-│   │   ├── server.js              # MCP Server entry point
-│   │   ├── tool-registry.js       # 134 tool definitions + annotations + outputSchema
-│   │   ├── tool-router.js         # Dynamic routing with read-only gate
-│   │   └── handlers/              # 15 modular handler files
-│   ├── utils/
-│   │   ├── structured-response.js # Structured output (MCP 2025-06-18)
-│   │   ├── cache.js               # TTL-based caching
-│   │   ├── config.js              # Zod validation
-│   │   └── response-optimizer.js  # Compact response formatting
-│   └── metabase/
-│       └── client.js              # Metabase API client
-```
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## Resources
-
-- [MCP integration guide](README_MCP.md)
-- [npm package](https://www.npmjs.com/package/metabase-ai-assistant)
 
 ---
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE)
+Licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for details.
+
+Developed and maintained by **Abdullah Enes SARI** ([ONMARTECH LLC](https://github.com/enessari)).

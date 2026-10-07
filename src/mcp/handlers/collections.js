@@ -1,8 +1,9 @@
+import { BaseHandler } from './base.js';
 import { EMPTY_COLLECTION_LIST, summarizeCollections } from '../dashboard-layout.js';
 
-export class CollectionsHandler {
-  constructor(metabaseClient) {
-    this.metabaseClient = metabaseClient;
+export class CollectionsHandler extends BaseHandler {
+  constructor(contextOrClient) {
+    super(contextOrClient);
   }
 
   routes() {
