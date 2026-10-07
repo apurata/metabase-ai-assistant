@@ -32,6 +32,20 @@ upstream ──► main (sync only)
 4. **Upstream PRs:** paused unless the human OK’s — see contribution note above. When allowed: same remote feature branch; after accept, sync `main` and keep `apurata` current.
 5. **Sync main:** periodically `git fetch upstream` and **merge** (prefer `--ff-only` when possible; otherwise a merge commit) into `main` — never rewrite remote history / no rebase of published tips. Then merge `main` (or `upstream/main`) into `apurata` via a short-lived `chore/sync-upstream-*` branch.
 
+## Upstream sync — definition of done
+
+Automation or human sync may resolve conflicts aggressively; **tests** are the safety net (not prompt-only policy).
+
+1. Tag **before** merge: `apurata-pre-sync-YYYY-MM-DD` on current `apurata`.
+2. Merge upstream into `chore/sync-upstream-*` → resolve → merge into `apurata`.
+3. Green: `npm test` (includes `tests/apurata/`) **and** `npm run test:apurata` **and** `node scripts/smoke_write_guards.mjs`.
+4. Tag **after**: `apurata-synced-upstream-vX.Y.Z` (or date) on the new `apurata` tip.
+5. Push `main`, `apurata`, and the `chore/…` branch (no rebase / no force-push).
+
+Rollback: `git checkout apurata && git reset --hard apurata-pre-sync-YYYY-MM-DD` (or the last `apurata-synced-*`), then restart Cursor MCP.
+
+Apurata contract tests live in **`tests/apurata/`** (write allowlist, native Mongo update, tabs, field coercion, Cursor structuredContent).
+
 ## Last upstream sync
 
 - **Upstream tip:** `v5.3.0` (`009ae02`, Metabase v0.50–v0.61+ compat, deps security, dbt/semantic tools).
