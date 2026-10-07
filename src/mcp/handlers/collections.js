@@ -31,11 +31,11 @@ export class CollectionsHandler extends BaseHandler {
       return {
         content: [{
           type: 'text',
-          text: `✅ **Collection Created!**\\n\\n` +
-            `🆔 Collection ID: ${collection.id}\\n` +
-            `📁 Name: ${collection.name}\\n` +
-            `📝 Description: ${collection.description || 'None'}\\n` +
-            `🎨 Color: ${collection.color}\\n` +
+          text: `✅ **Collection Created!**\n\n` +
+            `🆔 Collection ID: ${collection.id}\n` +
+            `📁 Name: ${collection.name}\n` +
+            `📝 Description: ${collection.description || 'None'}\n` +
+            `🎨 Color: ${collection.color}\n` +
             `📂 Parent: ${args.parent_id || 'Root'}`
         }]
       };
@@ -58,7 +58,7 @@ export class CollectionsHandler extends BaseHandler {
     }
   }
 
-  async handleCollectionList(args) {
+  async handleCollectionList(args = {}) {
     try {
       const collections = await this.metabaseClient.request('GET', '/api/collection');
       const rows = summarizeCollections(collections, args.parent_id);
@@ -110,9 +110,9 @@ export class CollectionsHandler extends BaseHandler {
       return {
         content: [{
           type: 'text',
-          text: `✅ **Item Moved!**\\n\\n` +
-            `📦 Type: ${args.item_type}\\n` +
-            `🆔 Item ID: ${args.item_id}\\n` +
+          text: `✅ **Item Moved!**\n\n` +
+            `📦 Type: ${args.item_type}\n` +
+            `🆔 Item ID: ${args.item_id}\n` +
             `📂 Target Collection: ${args.target_collection_id || 'Root'}`
         }]
       };
@@ -200,19 +200,25 @@ export class CollectionsHandler extends BaseHandler {
       let copiedCards = 0;
       let copiedDashboards = 0;
 
-      // Copy each item
+      // Copy each item via Metabase REST (do not call CardsHandler methods from here)
       for (const item of allItems) {
         if (item.model === 'card') {
-          await this.handleCardCopy({
-            card_id: item.id,
+          const sourceCard = await this.metabaseClient.request('GET', `/api/card/${item.id}`);
+          await this.metabaseClient.request('POST', '/api/card', {
+            name: `Copy of ${sourceCard.name}`,
+            description: sourceCard.description,
+            display: sourceCard.display,
+            dataset_query: sourceCard.dataset_query,
+            visualization_settings: sourceCard.visualization_settings,
             collection_id: newCollection.id
           });
           copiedCards++;
         } else if (item.model === 'dashboard') {
-          await this.handleDashboardCopy({
-            dashboard_id: item.id,
-            collection_id: newCollection.id,
-            deep_copy: false // Don't deep copy cards as they're already being copied
+          const sourceDash = await this.metabaseClient.request('GET', `/api/dashboard/${item.id}`);
+          await this.metabaseClient.request('POST', '/api/dashboard', {
+            name: `Copy of ${sourceDash.name}`,
+            description: sourceDash.description,
+            collection_id: newCollection.id
           });
           copiedDashboards++;
         }

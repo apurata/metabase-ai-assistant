@@ -22,12 +22,12 @@ describe('Milestone 3: Metabase BI API Enhancements & Handlers Compatibility Tes
     };
   });
 
-  describe('CollectionsHandler parent_id Support & Item Listing', () => {
-    test('handleCollectionList with no parent_id requests /api/collection and returns top-level collections', async () => {
+  describe('CollectionsHandler Apurata collection listing', () => {
+    test('handleCollectionList with no parent_id lists non-personal collections with parent_id', async () => {
       mockClient.request.mockResolvedValueOnce([
-        { id: 1, name: 'Marketing', description: 'Marketing assets', personal_owner_id: null },
-        { id: 2, name: 'Engineering', description: 'Eng metrics', personal_owner_id: null },
-        { id: 99, name: "Alice's Personal", personal_owner_id: 5 }
+        { id: 1, name: 'Marketing', description: 'Marketing assets', personal_owner_id: null, parent_id: null },
+        { id: 2, name: 'Engineering', description: 'Eng metrics', personal_owner_id: null, parent_id: null },
+        { id: 99, name: "Alice's Personal", personal_owner_id: 5, parent_id: null }
       ]);
 
       const handler = new CollectionsHandler(mockClient);
@@ -40,67 +40,43 @@ describe('Milestone 3: Metabase BI API Enhancements & Handlers Compatibility Tes
       expect(result.content[0].text).not.toContain('\\n');
       expect(result.structuredContent).toEqual({
         collections: [
-          { id: 1, name: 'Marketing' },
-          { id: 2, name: 'Engineering' }
+          { id: 1, name: 'Marketing', parent_id: null },
+          { id: 2, name: 'Engineering', parent_id: null }
         ],
-        count: 3
+        count: 2
       });
     });
 
-    test('handleCollectionList with numeric parent_id requests /api/collection/:id/items', async () => {
-      mockClient.request.mockResolvedValueOnce({
-        total: 2,
-        data: [
-          { id: 101, name: 'Monthly ARR Card', model: 'card', description: 'ARR Breakdown' },
-          { id: 102, name: 'Sub Collection 1', model: 'collection', description: 'Nested Folder' }
-        ]
-      });
+    test('handleCollectionList with numeric parent_id filters descendant collections', async () => {
+      mockClient.request.mockResolvedValueOnce([
+        { id: 12, name: 'Parent', personal_owner_id: null, parent_id: null },
+        { id: 102, name: 'Sub Collection 1', personal_owner_id: null, parent_id: 12 },
+        { id: 103, name: 'Other', personal_owner_id: null, parent_id: 1 },
+      ]);
 
       const handler = new CollectionsHandler(mockClient);
       const result = await handler.handleCollectionList({ parent_id: 12 });
 
-      expect(mockClient.request).toHaveBeenCalledWith('GET', '/api/collection/12/items');
-      expect(result.content[0].text).toContain('Collection Items (Parent: 12)');
-      expect(result.content[0].text).toContain('[card] **Monthly ARR Card** (ID: 101)');
-      expect(result.content[0].text).toContain('[collection] **Sub Collection 1** (ID: 102)');
-      expect(result.content[0].text).not.toContain('\\n');
-      expect(result.structuredContent.parent_id).toBe(12);
-      expect(result.structuredContent.items).toHaveLength(2);
-      expect(result.structuredContent.collections).toEqual([{ id: 102, name: 'Sub Collection 1' }]);
-      expect(result.structuredContent.count).toBe(2);
-    });
-
-    test('handleCollectionList with parent_id: "root" requests /api/collection/root/items', async () => {
-      mockClient.request.mockResolvedValueOnce([
-        { id: 201, name: 'Root Dashboard', model: 'dashboard', description: 'Main KPI Board' }
-      ]);
-
-      const handler = new CollectionsHandler(mockClient);
-      const result = await handler.handleCollectionList({ parent_id: 'root' });
-
-      expect(mockClient.request).toHaveBeenCalledWith('GET', '/api/collection/root/items');
-      expect(result.content[0].text).toContain('Collection Items (Parent: root)');
-      expect(result.content[0].text).toContain('[dashboard] **Root Dashboard** (ID: 201)');
-      expect(result.structuredContent.parent_id).toBe('root');
-      expect(result.structuredContent.items[0]).toEqual({
-        id: 201,
-        name: 'Root Dashboard',
-        model: 'dashboard',
-        description: 'Main KPI Board'
+      expect(mockClient.request).toHaveBeenCalledWith('GET', '/api/collection');
+      expect(result.content[0].text).toContain('descendants of 12');
+      expect(result.content[0].text).toContain('Sub Collection 1');
+      expect(result.content[0].text).not.toContain('Other');
+      expect(result.structuredContent).toEqual({
+        collections: [{ id: 102, name: 'Sub Collection 1', parent_id: 12 }],
+        count: 1
       });
-      expect(result.structuredContent.count).toBe(1);
     });
 
-    test('handleCollectionList with empty collection handles items cleanly', async () => {
-      mockClient.request.mockResolvedValueOnce([]);
+    test('handleCollectionList with empty descendants returns zero rows', async () => {
+      mockClient.request.mockResolvedValueOnce([
+        { id: 1, name: 'Marketing', personal_owner_id: null, parent_id: null },
+      ]);
 
       const handler = new CollectionsHandler(mockClient);
       const result = await handler.handleCollectionList({ parent_id: 999 });
 
-      expect(mockClient.request).toHaveBeenCalledWith('GET', '/api/collection/999/items');
-      expect(result.content[0].text).toContain('No items found in this collection.');
-      expect(result.structuredContent.items).toEqual([]);
-      expect(result.structuredContent.count).toBe(0);
+      expect(mockClient.request).toHaveBeenCalledWith('GET', '/api/collection');
+      expect(result.structuredContent).toEqual({ collections: [], count: 0 });
     });
   });
 
@@ -171,7 +147,17 @@ describe('Milestone 3: Metabase BI API Enhancements & Handlers Compatibility Tes
       expect(result.structuredContent.name).toBe('Exec KPI Dashboard');
       expect(result.structuredContent.description).toBe('High-level KPIs');
       expect(result.structuredContent.collection_id).toBe(42);
-      expect(result.structuredContent.cards).toEqual([{ id: 1, card_id: 101 }]);
+      expect(result.structuredContent.cards).toEqual([{
+        id: 1,
+        card_id: 101,
+        name: null,
+        dashboard_tab_id: null,
+        row: undefined,
+        col: undefined,
+        size_x: undefined,
+        size_y: undefined,
+      }]);
+      expect(result.structuredContent.tabs).toEqual([]);
     });
 
     test('handleDashboardGet includes collection_id as null when null/undefined', async () => {
@@ -189,7 +175,8 @@ describe('Milestone 3: Metabase BI API Enhancements & Handlers Compatibility Tes
 
       expect(result.structuredContent.id).toBe(8);
       expect(result.structuredContent.collection_id).toBeNull();
-      expect(result.structuredContent.description).toBeNull();
+      // Cursor rejects JSON null on description — Apurata coerces to ""
+      expect(result.structuredContent.description).toBe('');
     });
   });
 

@@ -28,8 +28,18 @@ const DEFAULT_CARD_DATA_MAX_ROWS = 150;
 const NATIVE_QUERY_TEXT_MAX = 50000;
 
 export class CardsHandler extends BaseHandler {
-  constructor(contextOrClient) {
-    super(contextOrClient);
+  constructor(contextOrClient, activityLogger, connectionManager) {
+    if (contextOrClient && typeof contextOrClient === 'object' && contextOrClient.metabaseClient) {
+      super(contextOrClient);
+    } else {
+      super({
+        metabaseClient: contextOrClient,
+        activityLogger,
+        connectionManager,
+      });
+      this.connectionManager = connectionManager || null;
+      this.activityLogger = activityLogger || null;
+    }
   }
 
   routes() {
@@ -666,8 +676,15 @@ export class CardsHandler extends BaseHandler {
       if (args.sizeX !== undefined) position.sizeX = args.sizeX;
       if (args.sizeY !== undefined) position.sizeY = args.sizeY;
 
+      const questionId = args.question_id ?? args.card_id;
+      if (questionId == null) {
+        throw new Error('question_id (or card_id) is required');
+      }
       const dashboard = await this.metabaseClient.request('GET', `/api/dashboard/${args.dashboard_id}`);
-      const body = buildAddCardPutBody(dashboard, args.question_id, {
+      if (!dashboard || typeof dashboard !== 'object') {
+        throw new Error(`Dashboard ${args.dashboard_id} not found`);
+      }
+      const body = buildAddCardPutBody(dashboard, questionId, {
         row: position.row,
         col: position.col,
         sizeX: position.sizeX || position.size_x,
@@ -677,15 +694,15 @@ export class CardsHandler extends BaseHandler {
       });
       const updated = await this.metabaseClient.request('PUT', `/api/dashboard/${args.dashboard_id}`, body);
       const cards = dashcardsOf(updated);
-      const placed = cards.filter((c) => c.card_id === args.question_id).at(-1);
+      const placed = cards.filter((c) => c.card_id === questionId).at(-1);
       const tabId = placed?.dashboard_tab_id ?? args.dashboard_tab_id ?? null;
 
       return {
         content: [{
           type: 'text',
           text: `✅ Card added to dashboard\n` +
-            `Dashboard: ${updated.name || args.dashboard_id}\n` +
-            `Question ID: ${args.question_id}\n` +
+            `Dashboard: ${updated?.name || args.dashboard_id}\n` +
+            `Question ID: ${questionId}\n` +
             `dashboard_tab_id: ${tabId}\n` +
             `Total cards: ${cards.length}`
         }],
@@ -1096,14 +1113,513 @@ export class CardsHandler extends BaseHandler {
       return {
         content: [{
           type: 'text',
-          text: `✅ AI descriptions generated successfully!\\n\\n📊 **Summary:**\\n- Databases: ${updated.databases} updated\\n- Tables: ${updated.tables} updated\\n- Fields: ${updated.fields} updated\\n\\n🤖 All descriptions include AI signature: ${aiSignature}\\n\\n💡 **Features:**\\n- Smart categorization based on table names\\n- Contextual descriptions for business intelligence\\n- Timestamp tracking for audit purposes\\n- Batch processing for efficiency`
-        }]
+          text: `⚠️ **[AI-GENERATED CONTENT — REVIEW BEFORE EXECUTING]**\n\n` +
+            `✅ AI descriptions generated successfully!\n\n` +
+            `📊 **Summary:**\n` +
+            `- Databases: ${updated.databases} updated\n` +
+            `- Tables: ${updated.tables} updated\n` +
+            `- Fields: ${updated.fields} updated\n\n` +
+            `🤖 All descriptions include AI signature: ${aiSignature}\n\n` +
+            `💡 **Features:**\n` +
+            `- Smart categorization based on table names\n` +
+            `- Contextual descriptions for business intelligence\n` +
+            `- Timestamp tracking for audit purposes\n` +
+            `- Batch processing for efficiency`
+        }],
+        structuredContent: {
+          database_id,
+          target_type,
+          updated,
+          _provenance: {
+            ai_generated: true,
+            tool: 'mb_auto_describe',
+            review_required: true,
+            timestamp: new Date().toISOString(),
+            provider: 'heuristic_ai',
+            model: 'metabase-auto-describe-v1',
+            generation_parameters: {
+              database_id,
+              target_type,
+              force_update,
+            },
+          },
+        },
       };
 
     } catch (error) {
       return {
         content: [{ type: 'text', text: `❌ Error generating AI descriptions: ${error.message}` }]
       };
+    }
+  }
+
+
+  // === VISUALIZATION HANDLERS ===
+
+  async handleVisualizationSettings(args) {
+    try {
+      const questionId = args.question_id;
+
+      // Get current question
+      const question = await this.metabaseClient.getQuestion(questionId);
+
+      // If updating
+      if (args.display || args.settings) {
+        const updateData = {};
+        if (args.display) updateData.display = args.display;
+        if (args.settings) updateData.visualization_settings = args.settings;
+
+        const updated = await this.metabaseClient.updateQuestion(questionId, updateData);
+
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ **Visualization Updated!**\\n\\n` +
+              `🆔 Question ID: ${questionId}\\n` +
+              `📊 Display Type: ${updated.display || args.display}\\n` +
+              `⚙️ Settings Applied: ${Object.keys(args.settings || {}).length} properties`
+          }]
+        };
+      }
+
+      // Return current settings
+      return {
+        content: [{
+          type: 'text',
+          text: `📊 **Visualization Settings: ${question.name}**\\n\\n` +
+            `🆔 Question ID: ${questionId}\\n` +
+            `📈 Display Type: ${question.display}\\n\\n` +
+            `⚙️ **Current Settings:**\\n\`\`\`json\\n${JSON.stringify(question.visualization_settings || {}, null, 2)}\\n\`\`\``
+        }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Visualization settings error: ${error.message}` }]
+      };
+    }
+  }
+
+
+  async handleVisualizationRecommend(args) {
+    try {
+      const question = await this.metabaseClient.getQuestion(args.question_id);
+      const purpose = args.purpose || 'general';
+
+      // Analyze the result metadata
+      const resultMetadata = question.result_metadata || [];
+      const columnTypes = resultMetadata.map(col => ({
+        name: col.name,
+        baseType: col.base_type,
+        semanticType: col.semantic_type
+      }));
+
+      const hasDate = columnTypes.some(c => c.baseType?.includes('Date') || c.baseType?.includes('Timestamp'));
+      const hasNumeric = columnTypes.some(c => c.baseType?.includes('Integer') || c.baseType?.includes('Float') || c.baseType?.includes('Decimal'));
+      const hasCategory = columnTypes.some(c => c.semanticType?.includes('Category') || c.baseType?.includes('Text'));
+      const columnCount = columnTypes.length;
+
+      let recommendations = [];
+
+      if (purpose === 'trend' || (hasDate && hasNumeric)) {
+        recommendations.push({
+          type: 'line',
+          reason: 'Best for showing trends over time',
+          settings: { 'graph.dimensions': [columnTypes.find(c => c.baseType?.includes('Date'))?.name] }
+        });
+      }
+
+      if (purpose === 'comparison' || hasCategory) {
+        recommendations.push({
+          type: 'bar',
+          reason: 'Best for comparing values across categories',
+          settings: { 'graph.show_values': true }
+        });
+      }
+
+      if (purpose === 'composition' || (hasNumeric && columnCount <= 5)) {
+        recommendations.push({
+          type: 'pie',
+          reason: 'Best for showing parts of a whole',
+          settings: { 'pie.show_legend': true, 'pie.show_total': true }
+        });
+      }
+
+      if (purpose === 'kpi' || columnCount === 1) {
+        recommendations.push({
+          type: 'scalar',
+          reason: 'Best for single KPI values',
+          settings: {}
+        });
+      }
+
+      if (purpose === 'distribution') {
+        recommendations.push({
+          type: 'bar',
+          reason: 'Best for showing value distributions',
+          settings: { 'graph.x_axis.scale': 'histogram' }
+        });
+      }
+
+      if (recommendations.length === 0) {
+        recommendations.push({ type: 'table', reason: 'Default for complex data', settings: {} });
+      }
+
+      let output = `📊 **Visualization Recommendations: ${question.name}**\\n\\n`;
+      output += `📋 **Data Profile:**\\n`;
+      output += `• Columns: ${columnCount}\\n`;
+      output += `• Has Date: ${hasDate ? 'Yes' : 'No'}\\n`;
+      output += `• Has Numeric: ${hasNumeric ? 'Yes' : 'No'}\\n`;
+      output += `• Has Category: ${hasCategory ? 'Yes' : 'No'}\\n\\n`;
+
+      output += `💡 **Recommendations:**\\n`;
+      recommendations.forEach((rec, i) => {
+        output += `${i + 1}. **${rec.type.toUpperCase()}** - ${rec.reason}\\n`;
+      });
+
+      return {
+        content: [{ type: 'text', text: output }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Visualization recommendation failed: ${error.message}` }]
+      };
+    }
+  }
+
+
+  // === FIELD METADATA HANDLERS ===
+
+  async handleFieldMetadata(args) {
+    try {
+      const fieldId = args.field_id;
+
+      // Get current field
+      const field = await this.metabaseClient.request('GET', `/api/field/${fieldId}`);
+
+      // If updating
+      if (args.display_name || args.description || args.semantic_type || args.visibility_type || args.has_field_values) {
+        const updateData = {};
+        if (args.display_name) updateData.display_name = args.display_name;
+        if (args.description) updateData.description = args.description;
+        if (args.semantic_type) updateData.semantic_type = args.semantic_type;
+        if (args.visibility_type) updateData.visibility_type = args.visibility_type;
+        if (args.has_field_values) updateData.has_field_values = args.has_field_values;
+
+        const updated = await this.metabaseClient.request('PUT', `/api/field/${fieldId}`, updateData);
+
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ **Field Metadata Updated!**\\n\\n` +
+              `🆔 Field ID: ${fieldId}\\n` +
+              `📋 Display Name: ${updated.display_name}\\n` +
+              `🏷️ Semantic Type: ${updated.semantic_type || 'None'}\\n` +
+              `👁️ Visibility: ${updated.visibility_type}`
+          }]
+        };
+      }
+
+      // Return current metadata
+      return {
+        content: [{
+          type: 'text',
+          text: `📋 **Field Metadata: ${field.display_name}**\\n\\n` +
+            `🆔 Field ID: ${fieldId}\\n` +
+            `📛 Name: ${field.name}\\n` +
+            `📋 Display Name: ${field.display_name}\\n` +
+            `📝 Description: ${field.description || 'None'}\\n` +
+            `🏷️ Semantic Type: ${field.semantic_type || 'None'}\\n` +
+            `📊 Base Type: ${field.base_type}\\n` +
+            `👁️ Visibility: ${field.visibility_type}\\n` +
+            `🔍 Has Field Values: ${field.has_field_values}`
+        }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Field metadata error: ${error.message}` }]
+      };
+    }
+  }
+
+
+  async handleTableMetadata(args) {
+    try {
+      const tableId = args.table_id;
+
+      // Get current table
+      const table = await this.metabaseClient.request('GET', `/api/table/${tableId}`);
+
+      // If updating
+      if (args.display_name || args.description || args.visibility_type) {
+        const updateData = {};
+        if (args.display_name) updateData.display_name = args.display_name;
+        if (args.description) updateData.description = args.description;
+        if (args.visibility_type) updateData.visibility_type = args.visibility_type;
+
+        const updated = await this.metabaseClient.request('PUT', `/api/table/${tableId}`, updateData);
+
+        return {
+          content: [{
+            type: 'text',
+            text: `✅ **Table Metadata Updated!**\\n\\n` +
+              `🆔 Table ID: ${tableId}\\n` +
+              `📋 Display Name: ${updated.display_name}\\n` +
+              `👁️ Visibility: ${updated.visibility_type}`
+          }]
+        };
+      }
+
+      // Return current metadata
+      return {
+        content: [{
+          type: 'text',
+          text: `📋 **Table Metadata: ${table.display_name}**\\n\\n` +
+            `🆔 Table ID: ${tableId}\\n` +
+            `📛 Name: ${table.name}\\n` +
+            `📋 Display Name: ${table.display_name}\\n` +
+            `📝 Description: ${table.description || 'None'}\\n` +
+            `👁️ Visibility: ${table.visibility_type}\\n` +
+            `🗃️ Schema: ${table.schema}\\n` +
+            `📊 Fields: ${table.fields?.length || 0}`
+        }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Table metadata error: ${error.message}` }]
+      };
+    }
+  }
+
+
+  async handleFieldValues(args) {
+    try {
+      const fieldId = args.field_id;
+
+      const values = await this.metabaseClient.request('GET', `/api/field/${fieldId}/values`);
+
+      let output = `📋 **Field Values (ID: ${fieldId})**\\n\\n`;
+
+      if (values.values && values.values.length > 0) {
+        const displayValues = values.values.slice(0, 20);
+        displayValues.forEach((val, i) => {
+          const displayVal = Array.isArray(val) ? val[0] : val;
+          output += `${i + 1}. ${displayVal}\\n`;
+        });
+
+        if (values.values.length > 20) {
+          output += `\\n... and ${values.values.length - 20} more values`;
+        }
+      } else {
+        output += 'No values found or field values not cached.';
+      }
+
+      return {
+        content: [{ type: 'text', text: output }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Field values error: ${error.message}` }]
+      };
+    }
+  }
+
+
+  // === EMBEDDING HANDLERS ===
+
+  async handleEmbedUrlGenerate(args) {
+    try {
+      // Get embedding secret key from environment or settings
+      const secretKey = process.env.METABASE_EMBEDDING_SECRET_KEY;
+
+      if (!secretKey) {
+        return {
+          content: [{
+            type: 'text',
+            text: `⚠️ **Embedding Secret Key Not Configured**\\n\\n` +
+              `Please set METABASE_EMBEDDING_SECRET_KEY in your environment.\\n\\n` +
+              `You can find this in Metabase Admin > Settings > Embedding.`
+          }]
+        };
+      }
+
+      // Import JWT library dynamically
+      const jwt = await import('jsonwebtoken');
+
+      const resourceType = args.resource_type;
+      const resourceId = args.resource_id;
+      const params = args.params || {};
+      const expMinutes = args.exp_minutes || 10;
+
+      // Create JWT payload
+      const payload = {
+        resource: { [resourceType]: resourceId },
+        params: params,
+        exp: Math.round(Date.now() / 1000) + (expMinutes * 60)
+      };
+
+      const token = jwt.default.sign(payload, secretKey);
+
+      // Build embed URL
+      const baseUrl = process.env.METABASE_URL;
+      let embedUrl = `${baseUrl}/embed/${resourceType}/${token}`;
+
+      // Add theme and options
+      const urlParams = [];
+      if (args.theme && args.theme !== 'light') urlParams.push(`theme=${args.theme}`);
+      if (args.bordered === false) urlParams.push('bordered=false');
+      if (args.titled === false) urlParams.push('titled=false');
+
+      if (urlParams.length > 0) {
+        embedUrl += '#' + urlParams.join('&');
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ **Embed URL Generated!**\\n\\n` +
+            `📊 Resource: ${resourceType} (ID: ${resourceId})\\n` +
+            `⏱️ Expires: ${expMinutes} minutes\\n` +
+            `🔒 Parameters: ${Object.keys(params).length} locked\\n\\n` +
+            `🔗 **Embed URL:**\\n\`\`\`\\n${embedUrl}\\n\`\`\`\\n\\n` +
+            `📋 **HTML:**\\n\`\`\`html\\n<iframe src="${embedUrl}" width="100%" height="600" frameborder="0"></iframe>\\n\`\`\``
+        }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Embed URL generation failed: ${error.message}` }]
+      };
+    }
+  }
+
+
+  async handleEmbedSettings(args) {
+    try {
+      // Get embedding settings from Metabase
+      const settings = await this.metabaseClient.request('GET', '/api/setting');
+
+      const embeddingEnabled = settings['enable-embedding'] || settings.find?.(s => s.key === 'enable-embedding')?.value;
+      const embedSecretSet = !!process.env.METABASE_EMBEDDING_SECRET_KEY;
+
+      return {
+        content: [{
+          type: 'text',
+          text: `📊 **Embedding Settings**\\n\\n` +
+            `🔒 Embedding Enabled: ${embeddingEnabled ? 'Yes' : 'No'}\\n` +
+            `🔑 Secret Key Configured: ${embedSecretSet ? 'Yes' : 'No'}\\n\\n` +
+            `💡 **To Enable Embedding:**\\n` +
+            `1. Go to Metabase Admin > Settings > Embedding\\n` +
+            `2. Enable embedding and copy the secret key\\n` +
+            `3. Set METABASE_EMBEDDING_SECRET_KEY in your environment`
+        }]
+      };
+
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Embed settings error: ${error.message}` }]
+      };
+    }
+  }
+
+
+  // ==================== SEARCH HANDLER ====================
+
+  async handleSearch(args) {
+    const { query, models, collection_id, limit = 50 } = args;
+
+    try {
+      let endpoint = `/api/search?q=${encodeURIComponent(query)}`;
+
+      if (models && models.length > 0) {
+        endpoint += `&models=${models.join(',')}`;
+      }
+      if (collection_id) {
+        endpoint += `&collection=${collection_id}`;
+      }
+      endpoint += `&limit=${limit}`;
+
+      const results = await this.metabaseClient.request('GET', endpoint);
+      const items = results.data || results;
+
+      // Group by type
+      const grouped = {};
+      for (const item of items) {
+        if (!grouped[item.model]) {
+          grouped[item.model] = [];
+        }
+        grouped[item.model].push(item);
+      }
+
+      let output = `Search results for "${query}" (${items.length} items):\n\n`;
+
+      for (const [type, typeItems] of Object.entries(grouped)) {
+        output += `${type.toUpperCase()}S (${typeItems.length}):\n`;
+        output += typeItems.map(i => `  - [${i.id}] ${i.name}`).join('\n') + '\n\n';
+      }
+
+      return {
+        content: [{ type: 'text', text: output }],
+        structuredContent: {
+          results: items.map(i => ({ id: i.id, name: i.name, model: i.model })),
+          count: items.length,
+        },
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `❌ Search error: ${error.message}` }] };
+    }
+  }
+
+
+  // ==================== SEGMENT HANDLERS ====================
+
+  async handleSegmentCreate(args) {
+    const { name, description, table_id, definition } = args;
+
+    try {
+      const segment = await this.metabaseClient.request('POST', '/api/segment', {
+        name,
+        description,
+        table_id,
+        definition
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Segment created:\n  ID: ${segment.id}\n  Name: ${segment.name}\n  Table: ${segment.table_id}`
+        }]
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `❌ Segment create error: ${error.message}` }] };
+    }
+  }
+
+
+  async handleSegmentList(args) {
+    const { table_id } = args;
+
+    try {
+      let segments = await this.metabaseClient.request('GET', '/api/segment');
+
+      if (table_id) {
+        segments = segments.filter(s => s.table_id === table_id);
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Found ${segments.length} segments:\n${segments.map(s =>
+            `  - [${s.id}] ${s.name} (Table: ${s.table_id})`
+          ).join('\n')}`
+        }]
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `❌ Segment list error: ${error.message}` }] };
     }
   }
 

@@ -39,12 +39,20 @@ describe('Integration Test: Dashboard Creation & Parameterized Card Workflow', (
     });
     expect(createDashResult.content[0].text).toMatch(/dashboard created/i);
 
-    // 2. Add Card to Dashboard with Grid Positioning
-    mockClient.addCardToDashboard.mockResolvedValueOnce({
-      id: 501,
-      dashboard_id: 101,
-      card_id: 42,
-    });
+    // 2. Add Card via Apurata PUT path (GET dashboard → PUT dashcards)
+    mockClient.request
+      .mockResolvedValueOnce({
+        id: 101,
+        name: 'Executive Sales Dashboard',
+        tabs: [],
+        dashcards: [],
+      })
+      .mockResolvedValueOnce({
+        id: 101,
+        name: 'Executive Sales Dashboard',
+        tabs: [],
+        dashcards: [{ id: 501, card_id: 42, row: 0, col: 0, size_x: 4, size_y: 4 }],
+      });
 
     const addCardResult = await cardsHandler.handleAddCardToDashboard({
       dashboard_id: 101,

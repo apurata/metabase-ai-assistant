@@ -51,7 +51,8 @@ describe('MCP Handlers Regression & Bug Fix Tests', () => {
       expect(metadata).toBeDefined();
       expect(metadata.outputSchema.properties.description.type).toEqual(['string', 'null']);
       expect(metadata.outputSchema.properties.collection_id.type).toEqual(['number', 'null']);
-      expect(metadata.outputSchema.properties.dataset_query.type).toBe('object');
+      // Apurata: nullable — Metabase cards may omit dataset_query
+      expect(metadata.outputSchema.properties.dataset_query.type).toEqual(['object', 'null']);
     });
 
     test('handleCardGet returns structuredContent with null-safe fields and dataset_query', async () => {
