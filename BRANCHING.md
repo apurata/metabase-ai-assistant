@@ -13,7 +13,7 @@ Upstream package: [metabase-ai-assistant on npm](https://www.npmjs.com/package/m
 
 Do **not** open PRs to upstream from `apurata` tip (it accumulates Apurata-only history). Cherry-pick or re-branch from `main` when contributing back.
 
-**Upstream contribution:** still pause new PRs to `enessari/metabase-ai-assistant` (and do not ping [#15](https://github.com/enessari/metabase-ai-assistant/pull/15)) unless the human explicitly OK’s a contribution. Upstream has shipped through **v5.3.0**; keep `main` in sync via merge (not rebase).
+**Upstream contribution (issue-first + Linear pair):** when filing work on Cursor MCP / this fork, create the **Linear** issue (Apurata) and, if the delta is **generalizable** (not Apurata-only paths, allowlist defaults, or `tests/apurata/`), also a **GitHub issue** on [`enessari/metabase-ai-assistant`](https://github.com/enessari/metabase-ai-assistant). Link **Linear → GitHub only** (never put Apurata Linear URLs in the GitHub issue — upstream has no access). Offer a PR in the GitHub issue; **do not open the PR** until the maintainer asks (or the human explicitly OK’s). [#15](https://github.com/enessari/metabase-ai-assistant/pull/15) was closed without merging our branch (maintainer reimplemented in v4.2.1) — prefer issues over unsolicited PRs. Inventory → KB `metabase_mcp_upstream_contributions`. Upstream tip sync’d through **v5.3.0**; keep `main` in sync via merge (not rebase).
 
 ## Workflow
 
@@ -23,13 +23,14 @@ upstream ──► main (sync only)
                 └── feature/foo
                         │
                         └── merge local → apurata + push
-                              keep origin/feature/foo  (later upstream PR)
+                              keep origin/feature/foo
+                              open upstream issue (offer PR; wait)
 ```
 
 1. **Daily Cursor MCP:** `git checkout apurata && git pull`.
 2. **New work:** `git checkout main && git pull` → `git checkout -b feature/…` (or `fix/…`).
 3. **Ship internally (default):** merge locally into `apurata`, push `apurata`, **delete the local** `feature/*`/`fix/*` branch, **leave the remote** branch (so it can become a PR to the original later). GitHub PRs on this fork are allowed, not the usual path.
-4. **Upstream PRs:** paused unless the human OK’s — see contribution note above. When allowed: same remote feature branch; after accept, sync `main` and keep `apurata` current.
+4. **Upstream + Linear:** open GitHub **issue** when filing Linear for a generalizable delta; Linear → GitHub link only; PR only if they ask or the human OK’s — same remote feature branch. After accept, sync `main` and keep `apurata` current.
 5. **Sync main:** periodically `git fetch upstream` and **merge** (prefer `--ff-only` when possible; otherwise a merge commit) into `main` — never rewrite remote history / no rebase of published tips. Then merge `main` (or `upstream/main`) into `apurata` via a short-lived `chore/sync-upstream-*` branch.
 
 ## Upstream sync — definition of done
