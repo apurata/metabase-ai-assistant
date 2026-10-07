@@ -5,7 +5,7 @@
  */
 
 export function dashcardsOf(dashboard) {
-  return dashboard.dashcards || dashboard.ordered_cards || [];
+  return dashboard?.dashcards || dashboard?.ordered_cards || [];
 }
 
 export function formatTabList(tabs) {
@@ -17,7 +17,7 @@ export function formatTabList(tabs) {
  * Dashboards without tabs keep a single canvas (null tab).
  */
 export function resolveDashboardTabId(dashboard, requestedTabId) {
-  const tabs = dashboard.tabs || [];
+  const tabs = dashboard?.tabs || [];
   if (tabs.length === 0) {
     return requestedTabId ?? null;
   }
@@ -67,7 +67,7 @@ export function buildCreateTabPutBody(dashboard, name) {
 export function buildAddCardPutBody(dashboard, cardId, options = {}) {
   const tabId = resolveDashboardTabId(dashboard, options.dashboard_tab_id);
   return {
-    tabs: (dashboard.tabs || []).map(serializeTabForPut),
+    tabs: (dashboard?.tabs || []).map(serializeTabForPut),
     dashcards: [
       ...dashcardsOf(dashboard).map(serializeDashcardForPut),
       {

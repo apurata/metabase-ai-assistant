@@ -71,7 +71,23 @@ const TABLE_METADATA_OUTPUT_SCHEMA = {
  * Tools not listed here get default annotations (readOnly=true).
  * destructiveHint=true means data loss is possible if misused.
  */
-const TOOL_METADATA = {
+// ── AI Provenance Schema ──
+const PROVENANCE_SCHEMA = {
+  type: 'object',
+  description: 'AI Provenance metadata envelope for tracking generative AI authorship and review requirements',
+  properties: {
+    ai_generated: { type: 'boolean' },
+    tool: { type: 'string' },
+    review_required: { type: 'boolean' },
+    timestamp: { type: 'string' },
+    provider: { type: 'string' },
+    model: { type: 'string' },
+    generation_parameters: { type: 'object' },
+  },
+  required: ['ai_generated', 'tool', 'review_required', 'timestamp'],
+};
+
+export const TOOL_METADATA = {
   // ── Database Exploration (read-only) ──
   db_list: {
     title: 'List Databases', outputSchema: {
@@ -196,12 +212,294 @@ const TOOL_METADATA = {
   db_ai_drop: { title: 'Drop AI Object', write: true, destructive: true, idempotent: true },
   db_vacuum_analyze: { title: 'Vacuum & Analyze', write: true, destructive: false, idempotent: true },
 
-  // ── AI Features (read-only) ──
-  ai_sql_generate: { title: 'Generate SQL with AI' },
-  ai_sql_optimize: { title: 'Optimize SQL with AI' },
-  ai_sql_explain: { title: 'Explain SQL with AI' },
-  ai_relationships_suggest: { title: 'Suggest Relationships with AI' },
-  mb_auto_describe: { title: 'Auto-Describe with AI' },
+  // ── AI Features ──
+  ai_sql_execute_and_heal: {
+    title: 'Execute & Self-Heal SQL',
+    write: false,
+    destructive: false,
+    idempotent: true,
+    outputSchema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        original_sql: { type: 'string' },
+        final_sql: { type: 'string' },
+        attempts_used: { type: 'number' },
+        healed: { type: 'boolean' },
+        columns: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              base_type: { type: 'string' },
+            },
+          },
+        },
+        rows: { type: 'array' },
+        row_count: { type: 'number' },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['success', 'original_sql', 'final_sql', '_provenance'],
+    },
+  },
+  ai_dashboard_build_full: {
+    title: 'Autonomous Full Dashboard Architect',
+    write: true,
+    destructive: false,
+    idempotent: false,
+    outputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'number' },
+        name: { type: 'string' },
+        description: { type: ['string', 'null'] },
+        url: { type: 'string' },
+        card_count: { type: 'number' },
+        filter_count: { type: 'number' },
+        cards: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              card_id: { type: 'number' },
+              name: { type: 'string' },
+              display: { type: 'string' },
+              position: {
+                type: 'object',
+                properties: {
+                  row: { type: 'number' },
+                  col: { type: 'number' },
+                  size_x: { type: 'number' },
+                  size_y: { type: 'number' },
+                },
+                required: ['row', 'col', 'size_x', 'size_y'],
+              },
+            },
+            required: ['card_id', 'name', 'position'],
+          },
+        },
+        filters: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              slug: { type: 'string' },
+              type: { type: 'string' },
+            },
+            required: ['id', 'name', 'type'],
+          },
+        },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['dashboard_id', 'name', 'url', 'card_count', 'cards', '_provenance'],
+    },
+  },
+  ai_sql_generate: {
+    title: 'Generate SQL with AI',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string' },
+        description: { type: 'string' },
+        database_id: { type: 'number' },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['sql', '_provenance'],
+    },
+  },
+  ai_sql_optimize: {
+    title: 'Optimize SQL with AI',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        original_sql: { type: 'string' },
+        optimized_sql: { type: 'string' },
+        optimizations: { type: 'array', items: { type: 'string' } },
+        improvements: { type: ['string', 'null'] },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['_provenance'],
+    },
+  },
+  ai_sql_explain: {
+    title: 'Explain SQL with AI',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string' },
+        explanation: { type: 'string' },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['explanation', '_provenance'],
+    },
+  },
+  ai_relationships_suggest: {
+    title: 'Suggest Relationships with AI',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        schema_name: { type: 'string' },
+        database_id: { type: 'number' },
+        confidence_threshold: { type: 'number' },
+        suggestions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              sourceTable: { type: 'string' },
+              sourceColumn: { type: 'string' },
+              targetTable: { type: 'string' },
+              targetColumn: { type: 'string' },
+              confidence: { type: 'number' },
+              relationshipType: { type: 'string' },
+              reasoning: { type: 'string' },
+            },
+          },
+        },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['suggestions', '_provenance'],
+    },
+  },
+  ai_query_index_advisor: {
+    title: 'AI Query Index & Materialized View Advisor',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string' },
+        database_id: { type: ['number', 'null'] },
+        dialect: { type: 'string' },
+        query_analysis: {
+          type: 'object',
+          properties: {
+            tables: { type: 'array', items: { type: 'string' } },
+            filter_columns: { type: 'array', items: { type: 'string' } },
+            join_conditions: { type: 'array', items: { type: 'string' } },
+            group_by_columns: { type: 'array', items: { type: 'string' } },
+            order_by_columns: { type: 'array', items: { type: 'string' } },
+            has_aggregations: { type: 'boolean' },
+            scans_detected: { type: 'array' },
+            bottlenecks: { type: 'array' },
+            explain_mode: { type: 'string' },
+          },
+        },
+        index_recommendations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              table: { type: 'string' },
+              index_name: { type: 'string' },
+              columns: { type: 'array', items: { type: 'string' } },
+              index_type: { type: 'string' },
+              ddl: { type: 'string' },
+              priority: { type: 'string' },
+              estimated_speedup: { type: 'string' },
+              rationale: { type: 'string' },
+            },
+            required: ['table', 'index_name', 'columns', 'ddl', 'priority'],
+          },
+        },
+        materialized_view_recommendations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              view_name: { type: 'string' },
+              ddl: { type: 'string' },
+              refresh_strategy: { type: 'string' },
+              priority: { type: 'string' },
+              estimated_speedup: { type: 'string' },
+              rationale: { type: 'string' },
+            },
+            required: ['view_name', 'ddl'],
+          },
+        },
+        estimated_impact: { type: 'string' },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['sql', 'dialect', 'query_analysis', 'index_recommendations', 'materialized_view_recommendations', '_provenance'],
+    },
+  },
+  ai_analytics_detect_anomalies: {
+    title: 'Proactive KPI Anomaly & Outlier Detector',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        metric_name: { type: 'string' },
+        time_column: { type: 'string' },
+        dimension_column: { type: ['string', 'null'] },
+        total_points_analyzed: { type: 'number' },
+        anomalies_detected_count: { type: 'number' },
+        method_used: { type: 'string' },
+        sensitivity: { type: 'string' },
+        baseline_summary: {
+          type: 'object',
+          properties: {
+            mean: { type: 'number' },
+            median: { type: 'number' },
+            std_dev: { type: 'number' },
+            min: { type: 'number' },
+            max: { type: 'number' },
+            trend: { type: 'string' },
+          },
+        },
+        anomalies: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              timestamp: { type: ['string', 'number'] },
+              actual_value: { type: 'number' },
+              expected_value: { type: 'number' },
+              lower_bound: { type: 'number' },
+              upper_bound: { type: 'number' },
+              absolute_deviation: { type: 'number' },
+              percentage_deviation: { type: 'number' },
+              severity: { type: 'string' },
+              type: { type: 'string' },
+              anomaly_score: { type: 'number' },
+              methods_flagged: { type: 'array', items: { type: 'string' } },
+              insight: { type: 'string' },
+              root_cause: { type: ['object', 'null'] },
+            },
+            required: ['timestamp', 'actual_value', 'expected_value', 'severity', 'anomaly_score'],
+          },
+        },
+        summary: {
+          type: 'object',
+          properties: {
+            total_points: { type: 'number' },
+            anomaly_count: { type: 'number' },
+            critical_count: { type: 'number' },
+            warning_count: { type: 'number' },
+          },
+        },
+        sparkline: { type: 'string' },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['metric_name', 'time_column', 'total_points_analyzed', 'anomalies_detected_count', 'anomalies', '_provenance'],
+    },
+  },
+  mb_auto_describe: {
+    title: 'Auto-Describe with AI',
+    write: true,
+    destructive: false,
+    idempotent: true,
+    outputSchema: {
+      type: 'object',
+      properties: {
+        database_id: { type: 'number' },
+        target_type: { type: 'string' },
+        updated: { type: 'object' },
+        _provenance: PROVENANCE_SCHEMA,
+      },
+      required: ['_provenance'],
+    },
+  },
 
   // ── Cards / Questions ──
   mb_question_create: { title: 'Create Question', write: true, destructive: false, idempotent: false },
@@ -359,7 +657,7 @@ const TOOL_METADATA = {
           type: 'array', items: {
             type: 'object', properties: {
               id: { type: 'number' }, email: { type: 'string' },
-              first_name: { type: 'string' }, last_name: { type: 'string' },
+              first_name: { type: ['string', 'null'] }, last_name: { type: ['string', 'null'] },
               is_active: { type: 'boolean' }
             }, required: ['id', 'email']
           }
@@ -486,6 +784,425 @@ const TOOL_METADATA = {
   mb_meta_import_preview: { title: 'Preview Import' },
   mb_meta_compare_environments: { title: 'Compare Environments' },
   mb_meta_auto_cleanup: { title: 'Auto Cleanup Metadata', write: true, destructive: true, idempotent: true },
+
+  // ── dbt & Semantic Layer (Governance-First) ──
+  dbt_inspect_models: { title: 'Inspect dbt Models & Architectural Layers' },
+  dbt_prioritize_sources: { title: 'Resolve Optimal dbt Source Models' },
+  dbt_project_scan_deep: {
+    title: 'Deep dbt Project & Lineage Scanner',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        project_dir: { type: 'string' },
+        model_count: { type: 'number' },
+        source_count: { type: 'number' },
+        metric_count: { type: 'number' },
+        exposure_count: { type: 'number' },
+        relationship_count: { type: 'number' },
+        doc_block_count: { type: 'number' },
+        catalog_table_count: { type: 'number' },
+        models_by_tier: {
+          type: 'object',
+          properties: {
+            marts_fact: { type: 'number' },
+            marts_dim: { type: 'number' },
+            marts_report: { type: 'number' },
+            intermediate: { type: 'number' },
+            staging: { type: 'number' },
+            raw: { type: 'number' },
+          },
+          required: ['marts_fact', 'marts_dim', 'marts_report', 'intermediate', 'staging', 'raw'],
+        },
+        models: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              tier: { type: 'string' },
+              tierRank: { type: 'number' },
+              tierDescription: { type: 'string' },
+              description: { type: 'string' },
+              schema: { type: 'string' },
+              database: { type: 'string' },
+              columns: { type: 'object' },
+              meta: { type: 'object' },
+              tags: { type: 'array', items: { type: 'string' } },
+              filePath: { type: 'string' },
+              stats: { type: 'object' },
+            },
+            required: ['name', 'tier', 'tierRank'],
+          },
+        },
+        sources: { type: 'array' },
+        metrics: { type: 'array' },
+        exposures: { type: 'array' },
+        relationships: { type: 'array' },
+        doc_blocks: { type: 'object' },
+        catalog_stats: { type: 'object' },
+        _provenance: {
+          type: 'object',
+          properties: {
+            governance_level: { type: 'string' },
+            scanner: { type: 'string' },
+            timestamp: { type: 'string' },
+            manifest_loaded: { type: 'boolean' },
+            catalog_loaded: { type: 'boolean' },
+            docs_loaded: { type: 'boolean' },
+          },
+          required: ['governance_level', 'scanner', 'timestamp'],
+        },
+      },
+      required: ['model_count', 'models_by_tier', 'models'],
+    },
+  },
+  dbt_lineage_joins_graph: {
+    title: 'Multi-Hop Lineage & Semantic Join Graph Resolver',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        project_dir: { type: 'string' },
+        node_count: { type: 'number' },
+        edge_count: { type: 'number' },
+        has_cycles: { type: 'boolean' },
+        cycle_nodes: { type: 'array', items: { type: 'string' } },
+        topological_order: { type: 'array', items: { type: 'string' } },
+        source_model: { type: 'string' },
+        target_model: { type: 'string' },
+        join_paths: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              source_model: { type: 'string' },
+              target_model: { type: 'string' },
+              hops: { type: 'number' },
+              path: { type: 'array', items: { type: 'string' } },
+              confidence_score: { type: 'number' },
+              edges: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    from_model: { type: 'string' },
+                    from_column: { type: 'string' },
+                    to_model: { type: 'string' },
+                    to_column: { type: 'string' },
+                    relationship_type: { type: 'string' },
+                    source: { type: 'string' },
+                    confidence: { type: 'number' },
+                  },
+                  required: ['from_model', 'from_column', 'to_model', 'to_column'],
+                },
+              },
+              sql_join_clause: { type: 'string' },
+            },
+            required: ['source_model', 'target_model', 'hops', 'path', 'edges'],
+          },
+        },
+        lineage: {
+          type: 'object',
+          properties: {
+            model: { type: 'string' },
+            upstream: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  depth: { type: 'number' },
+                  tier: { type: 'string' },
+                },
+                required: ['name', 'depth'],
+              },
+            },
+            downstream: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  depth: { type: 'number' },
+                  tier: { type: 'string' },
+                },
+                required: ['name', 'depth'],
+              },
+            },
+            direct_parents: { type: 'array', items: { type: 'string' } },
+            direct_children: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        sql_snippet: { type: 'string' },
+        _provenance: {
+          type: 'object',
+          properties: {
+            governance_level: { type: 'string' },
+            resolver: { type: 'string' },
+            timestamp: { type: 'string' },
+            manifest_loaded: { type: 'boolean' },
+            has_cycles: { type: 'boolean' },
+          },
+          required: ['governance_level', 'resolver', 'timestamp'],
+        },
+      },
+      required: ['node_count', 'edge_count', 'has_cycles', '_provenance'],
+    },
+  },
+  dbt_semantic_preagg_advisor: {
+    title: 'Cube.js Pre-Aggregation & Rollup Advisor',
+    outputSchema: {
+      type: 'object',
+      properties: {
+        project_dir: { type: 'string' },
+        model_name: { type: 'string' },
+        dialect: { type: 'string' },
+        time_grain: { type: 'string' },
+        target_schema: { type: 'string' },
+        recommendation_count: { type: 'number' },
+        recommendations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              type: { type: 'string', enum: ['rollup', 'rollup_join', 'aggregate_table'] },
+              model: { type: 'string' },
+              time_dimension: { type: 'string' },
+              time_grain: { type: 'string' },
+              dimensions: { type: 'array', items: { type: 'string' } },
+              measures: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    agg: { type: 'string' },
+                    column: { type: 'string' },
+                    additivity: { type: 'string', enum: ['additive', 'semi_additive', 'non_additive'] },
+                    sql_expression: { type: 'string' },
+                    rollup_expression: { type: 'string' },
+                  },
+                  required: ['name', 'agg', 'additivity', 'sql_expression'],
+                },
+              },
+              ddl: { type: 'string' },
+              index_ddl: { type: 'array', items: { type: 'string' } },
+              refresh_strategy: { type: 'string' },
+              refresh_schedule: { type: 'string' },
+              refresh_command: { type: 'string' },
+              speedup_estimate: {
+                type: 'object',
+                properties: {
+                  raw_rows: { type: 'number' },
+                  preagg_rows: { type: 'number' },
+                  speedup_factor: { type: 'number' },
+                  speedup_label: { type: 'string' },
+                  scan_reduction_pct: { type: 'number' },
+                  bytes_saved_est: { type: 'string' },
+                },
+                required: ['raw_rows', 'preagg_rows', 'speedup_factor', 'scan_reduction_pct'],
+              },
+              query_acceleration: {
+                type: 'object',
+                properties: {
+                  original_query_pattern: { type: 'string' },
+                  accelerated_query_pattern: { type: 'string' },
+                  routing_rule: { type: 'string' },
+                },
+              },
+            },
+            required: ['id', 'name', 'model', 'time_grain', 'dimensions', 'measures', 'ddl', 'speedup_estimate'],
+          },
+        },
+        metric_additivity_analysis: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              metric_name: { type: 'string' },
+              measure_type: { type: 'string' },
+              additivity: { type: 'string', enum: ['additive', 'semi_additive', 'non_additive'] },
+              decomposition: { type: 'string' },
+              hll_supported: { type: 'boolean' },
+              recommendation: { type: 'string' },
+            },
+            required: ['metric_name', 'additivity'],
+          },
+        },
+        ddl_summary: {
+          type: 'object',
+          properties: {
+            materialized_views: { type: 'array', items: { type: 'string' } },
+            indexes: { type: 'array', items: { type: 'string' } },
+            refresh_commands: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        _provenance: {
+          type: 'object',
+          properties: {
+            governance_level: { type: 'string' },
+            advisor: { type: 'string' },
+            dialect: { type: 'string' },
+            timestamp: { type: 'string' },
+            models_analyzed: { type: 'number' },
+            catalog_loaded: { type: 'boolean' },
+          },
+          required: ['governance_level', 'advisor', 'dialect', 'timestamp'],
+        },
+      },
+      required: ['model_name', 'dialect', 'recommendation_count', 'recommendations', '_provenance'],
+    },
+  },
+  dbt_build_dashboard_from_yaml: {
+    title: 'Lightdash-Style Code-as-BI Dashboard Builder',
+    write: true,
+    destructive: false,
+    idempotent: false,
+    outputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'number' },
+        name: { type: 'string' },
+        description: { type: ['string', 'null'] },
+        url: { type: 'string' },
+        card_count: { type: 'number' },
+        filter_count: { type: 'number' },
+        theme: { type: 'string' },
+        cards: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              card_id: { type: 'number' },
+              name: { type: 'string' },
+              display: { type: 'string' },
+              type: { type: 'string', enum: ['question', 'model'] },
+              is_model: { type: 'boolean' },
+              position: {
+                type: 'object',
+                properties: {
+                  row: { type: 'number' },
+                  col: { type: 'number' },
+                  size_x: { type: 'number' },
+                  size_y: { type: 'number' },
+                },
+                required: ['row', 'col', 'size_x', 'size_y'],
+              },
+              parameter_mappings: { type: 'array' },
+              visualization_settings: { type: 'object' },
+            },
+            required: ['card_id', 'name', 'position'],
+          },
+        },
+        filters: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              slug: { type: 'string' },
+              type: { type: 'string' },
+              default: { type: ['string', 'number', 'boolean', 'array', 'null'] },
+            },
+            required: ['id', 'name', 'type'],
+          },
+        },
+        grid_summary: {
+          type: 'object',
+          properties: {
+            grid_width: { type: 'number' },
+            total_rows: { type: 'number' },
+            kpi_count: { type: 'number' },
+            trend_count: { type: 'number' },
+            breakdown_count: { type: 'number' },
+            table_count: { type: 'number' },
+            model_count: { type: 'number' },
+          },
+        },
+        _provenance: {
+          type: 'object',
+          properties: {
+            governance_level: { type: 'string' },
+            builder: { type: 'string' },
+            timestamp: { type: 'string' },
+            theme: { type: 'string' },
+            card_count: { type: 'number' },
+            filter_count: { type: 'number' },
+          },
+          required: ['governance_level', 'builder', 'timestamp'],
+        },
+      },
+      required: ['dashboard_id', 'name', 'url', 'card_count', 'cards', '_provenance'],
+    },
+  },
+  dbt_semantic_export_yaml: {
+    title: 'Omni.co Controlled Semantic-to-YAML Exporter',
+    readOnlyHint: true,
+    destructive: false,
+    idempotent: true,
+    outputSchema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        export_format: { type: 'string' },
+        exported_count: { type: 'number' },
+        skipped_count: { type: 'number' },
+        active_rules_count: { type: 'number' },
+        deprecated_rules_count: { type: 'number' },
+        rules_by_category: {
+          type: 'object',
+          properties: {
+            metric_definition: { type: 'number' },
+            business_term: { type: 'number' },
+            filter_rule: { type: 'number' },
+            join_preference: { type: 'number' },
+            exclusion_rule: { type: 'number' },
+          },
+        },
+        target_models: { type: 'array', items: { type: 'string' } },
+        schema_yaml: { type: 'string' },
+        semantic_models_yaml: { type: 'string' },
+        metrics_yaml: { type: 'string' },
+        yaml_content: { type: 'string' },
+        files: {
+          type: 'object',
+          properties: {
+            'schema.yml': { type: 'string' },
+            'semantic_models.yml': { type: 'string' },
+            'metrics.yml': { type: 'string' },
+          },
+        },
+        exported_rules: { type: 'array' },
+        skipped_rules: { type: 'array' },
+        deprecated_rules: { type: 'array' },
+        _provenance: {
+          type: 'object',
+          properties: {
+            governance_level: { type: 'string' },
+            exporter: { type: 'string' },
+            timestamp: { type: 'string' },
+            exported_count: { type: 'number' },
+            skipped_count: { type: 'number' },
+            active_rules_count: { type: 'number' },
+            deprecated_rules_count: { type: 'number' },
+            audit_trail_preserved: { type: 'boolean' },
+            active_rules_only: { type: 'boolean' },
+            author: { type: 'string' },
+            rationale: { type: 'string' },
+          },
+          required: ['governance_level', 'exporter', 'timestamp'],
+        },
+      },
+      required: ['success', 'exported_count', 'yaml_content', 'files', '_provenance'],
+    },
+  },
+  semantic_memory_propose: { title: 'Propose Business Rule (Pending Approval)', write: true, destructive: false, idempotent: false },
+  semantic_memory_approve: { title: 'Explicitly Approve Business Rule', write: true, destructive: false, idempotent: true },
+  semantic_memory_deprecate: { title: 'Soft-Deprecate / Archive Business Rule (No Hard-Delete)', write: true, destructive: false, idempotent: true },
+  semantic_memory_restore: { title: 'Restore Business Rule', write: true, destructive: false, idempotent: true },
+  semantic_memory_list: { title: 'List Semantic Rules & Audit History' },
 };
 
 /**
@@ -1401,6 +2118,158 @@ export function getToolDefinitions() {
     },
     // === AI ASSISTANCE ===
     {
+      name: 'ai_sql_execute_and_heal',
+      description: 'Execute SQL query with autonomous self-healing: automatically intercepts syntax errors, missing columns, invalid tables, and group-by violations, inspects schema metadata, repairs the query up to 3 attempts, and returns verified results with complete healing audit trail.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          database_id: {
+            type: 'number',
+            description: 'Database ID to execute query on',
+          },
+          sql: {
+            type: 'string',
+            description: 'SQL query to execute and heal if errors occur',
+          },
+          max_attempts: {
+            type: 'number',
+            description: 'Maximum healing retry attempts (default: 3, max: 5)',
+          },
+          explanation: {
+            type: 'string',
+            description: 'Optional natural language explanation or intent for the query',
+          },
+          mask_pii: {
+            type: 'boolean',
+            description: 'Whether to mask sensitive PII in query results (default: true)',
+          },
+        },
+        required: ['database_id', 'sql'],
+      },
+    },
+    {
+      name: 'ai_dashboard_build_full',
+      description: 'Autonomously builds a complete Metabase dashboard in a single tool call with at least 4 analytical cards, optimal 24-column collision-free grid layout (KPI banners, trends, breakdowns, detail tables), and interactive parameter filter mappings.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Title of the dashboard to create',
+          },
+          description: {
+            type: 'string',
+            description: 'Description of the dashboard and its analytical purpose',
+          },
+          database_id: {
+            type: 'number',
+            description: 'Database ID to query for all card definitions',
+          },
+          collection_id: {
+            type: 'number',
+            description: 'Optional collection ID where dashboard and questions should be saved',
+          },
+          theme: {
+            type: 'string',
+            enum: ['executive', 'operational', 'analytical', 'marketing'],
+            default: 'executive',
+            description: 'Visual layout theme style',
+          },
+          cards: {
+            type: 'array',
+            description: 'List of at least 4 question/card specifications to create and place on the dashboard',
+            minItems: 4,
+            items: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  description: 'Name/title of the question',
+                },
+                description: {
+                  type: 'string',
+                  description: 'Optional description of what the question shows',
+                },
+                sql: {
+                  type: 'string',
+                  description: 'SQL query for the question (supports {{template_tag}} parameter syntax)',
+                },
+                display: {
+                  type: 'string',
+                  enum: ['scalar', 'number', 'gauge', 'line', 'bar', 'area', 'combo', 'waterfall', 'pie', 'donut', 'row', 'funnel', 'progress', 'table', 'pivot'],
+                  default: 'table',
+                  description: 'Metabase visualization display type',
+                },
+                size_x: {
+                  type: 'number',
+                  description: 'Custom width on 24-column grid (optional)',
+                },
+                size_y: {
+                  type: 'number',
+                  description: 'Custom height in grid units (optional)',
+                },
+                row: {
+                  type: 'number',
+                  description: 'Custom row coordinate (optional)',
+                },
+                col: {
+                  type: 'number',
+                  description: 'Custom column coordinate (optional)',
+                },
+                parameter_name: {
+                  type: 'string',
+                  description: 'Template tag or parameter variable name in SQL to bind to dashboard filter',
+                },
+                visualization_settings: {
+                  type: 'object',
+                  description: 'Optional Metabase visualization formatting settings',
+                },
+              },
+              required: ['name', 'sql'],
+            },
+          },
+          filters: {
+            type: 'array',
+            description: 'Optional dashboard filter controls to create and link to card queries',
+            items: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  description: 'Filter display label (e.g. "Date Range" or "Category")',
+                },
+                slug: {
+                  type: 'string',
+                  description: 'Filter slug identifier',
+                },
+                type: {
+                  type: 'string',
+                  description: 'Filter type (e.g. "date/all-options", "category", "string/=")',
+                },
+                default_value: {
+                  description: 'Optional default value for the filter',
+                },
+                target_variable: {
+                  type: 'string',
+                  description: 'Template tag variable name in card SQL queries to connect',
+                },
+                field_id: {
+                  type: 'number',
+                  description: 'Field ID for dimension-based filter mapping',
+                },
+              },
+              required: ['name', 'type'],
+            },
+          },
+          mask_pii: {
+            type: 'boolean',
+            description: 'Whether to mask sensitive PII in data samples (default: true)',
+          },
+        },
+        required: ['name', 'database_id', 'cards'],
+      },
+    },
+    {
       name: 'ai_sql_generate',
       description: 'Convert natural language requests into SQL queries - understands business context and table relationships',
       inputSchema: {
@@ -1725,20 +2594,6 @@ export function getToolDefinitions() {
       },
     },
     {
-      name: 'db_test_speed',
-      description: 'Quick test to check database connection and response time',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          database_id: {
-            type: 'number',
-            description: 'Database ID to test',
-          },
-        },
-        required: ['database_id'],
-      },
-    },
-    {
       name: 'db_schema_analyze',
       description: 'Deep schema analysis with column details, keys, constraints - requires direct DB connection for comprehensive insights',
       inputSchema: {
@@ -1815,6 +2670,102 @@ export function getToolDefinitions() {
           },
         },
         required: ['database_id', 'schema_name'],
+      },
+    },
+    {
+      name: 'ai_query_index_advisor',
+      description: 'Analyze SQL queries to identify table scans, recommend composite B-Tree indexes (Equality -> Range -> Sort/Group), covering/partial indexes, and materialized views with dialect-appropriate DDL',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sql: {
+            type: 'string',
+            description: 'SQL query to analyze for performance bottlenecks, index opportunities, and materialized views',
+          },
+          database_id: {
+            type: 'number',
+            description: 'Metabase database ID where the query is targeted (used for engine detection and EXPLAIN execution)',
+          },
+          card_id: {
+            type: 'number',
+            description: 'Optional Metabase question/card ID to extract SQL and database_id from',
+          },
+          run_explain: {
+            type: 'boolean',
+            description: 'Whether to execute EXPLAIN plan on the target database (default: true)',
+            default: true,
+          },
+          workload_analysis: {
+            type: 'boolean',
+            description: 'Whether to cross-reference Metabase query execution history for frequency and latency (default: false)',
+            default: false,
+          },
+          target_dialect: {
+            type: 'string',
+            description: 'Optional explicit database dialect override',
+            enum: ['postgres', 'mysql', 'sqlite', 'bigquery', 'snowflake', 'redshift', 'clickhouse', 'sqlserver', 'oracle', 'generic'],
+          },
+        },
+      },
+    },
+    {
+      name: 'ai_analytics_detect_anomalies',
+      description: 'Proactively detect statistical anomalies, outliers, and step shifts in time-series and metric data using Z-score/MAD, IQR, Bollinger bands, seasonal decomposition, and period delta with dimensional root-cause analysis',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sql: {
+            type: 'string',
+            description: 'SQL query returning time-series or metric data to analyze for anomalies',
+          },
+          database_id: {
+            type: 'number',
+            description: 'Database ID to execute the SQL query against',
+          },
+          card_id: {
+            type: 'number',
+            description: 'Optional Metabase question/card ID to fetch dataset from',
+          },
+          table_name: {
+            type: 'string',
+            description: 'Optional table name to automatically generate time-series aggregation query',
+          },
+          time_column: {
+            type: 'string',
+            description: 'Name of the time/date column (auto-detected if not specified)',
+          },
+          metric_column: {
+            type: 'string',
+            description: 'Name of the numeric metric column to evaluate (auto-detected if not specified)',
+          },
+          dimension_column: {
+            type: 'string',
+            description: 'Optional segmentation column (e.g. region, category, channel) for root-cause drilldown',
+          },
+          method: {
+            type: 'string',
+            description: 'Statistical anomaly detection algorithm',
+            enum: ['auto', 'z_score', 'modified_z_score', 'iqr', 'moving_average', 'seasonal_decomposition', 'percentage_delta'],
+            default: 'auto',
+          },
+          sensitivity: {
+            type: 'string',
+            description: 'Sensitivity threshold (low, medium, high)',
+            enum: ['low', 'medium', 'high'],
+            default: 'medium',
+          },
+          direction: {
+            type: 'string',
+            description: 'Direction of anomalies to flag (both, spike, drop)',
+            enum: ['both', 'spike', 'drop'],
+            default: 'both',
+          },
+          max_anomalies: {
+            type: 'number',
+            description: 'Maximum number of anomaly points to return in report (default: 20)',
+            default: 20,
+          },
+        },
       },
     },
     {
@@ -3150,8 +4101,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_data',
-      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true. API errors include HTTP status and Metabase response body.',
-      inputSchema: {
+      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true. API errors include HTTP status and Metabase response body.',      inputSchema: {
         type: 'object',
         properties: {
           card_id: {
@@ -3164,9 +4114,36 @@ export function getToolDefinitions() {
             default: 'json',
             description: 'Output format'
           },
+          ignore_cache: {
+            type: 'boolean',
+            default: false,
+            description: 'Whether to bypass query cache and force fresh execution'
+          },
           parameters: {
-            type: 'object',
-            description: 'Optional parameters for parametric questions'
+            type: 'array',
+            description: 'Sequential array of parameter objects per Metabase REST API specification (POST /api/card/:id/query)',
+            items: {
+              type: 'object',
+              properties: {
+                type: {
+                  type: 'string',
+                  description: 'Parameter type: category, date/single, date/range, date/relative, string/=, string/contains, number/=, number/between'
+                },
+                target: {
+                  type: 'array',
+                  description: 'Target path tuple: ["variable", ["template-tag", "tag_name"]] or ["dimension", ["field", field_id, null]]',
+                  items: {}
+                },
+                value: {
+                  description: 'Filter value to apply (string, number, array of values, or null)'
+                },
+                id: {
+                  type: 'string',
+                  description: 'Optional parameter ID or slug'
+                }
+              },
+              required: ['type', 'target', 'value']
+            }
           },
           max_rows: {
             type: 'number',
@@ -3825,6 +4802,692 @@ export function getToolDefinitions() {
             default: true
           }
         }
+      }
+    },
+    {
+      name: 'dbt_inspect_models',
+      title: 'Inspect dbt Models & Architectural Layers',
+      description: 'ℹ️ [dbt ARCHITECTURE] Inspect dbt project models, lineage, and architectural tiers (marts/facts, marts/dims, intermediate, staging) from manifest.json.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          manifest_path: {
+            type: 'string',
+            description: 'Optional absolute path to dbt target/manifest.json. Defaults to cached project manifest.'
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_prioritize_sources',
+      title: 'Resolve Optimal dbt Source Models',
+      description: '📊 [dbt SOURCE RESOLUTION] Prioritize the most trustworthy and aggregated dbt models (Gold Marts fct_/dim_ > Silver int_ > Bronze stg_) for a given question or intent.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query_intent: {
+            type: 'string',
+            description: 'Business question or analysis intent (e.g., "Monthly churn and active subscription trends")'
+          },
+          keywords: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional search keywords to match against dbt models, tags, and column names'
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_project_scan_deep',
+      title: 'Deep dbt Project & Lineage Scanner',
+      description: '🔍 [dbt DEEP SCANNER] Recursively scan dbt project repositories (models, sources, exposures, seeds, macros, schema.yml, docs/*.md, manifest.json, and catalog.json). Extracts all architectural tiers (marts, intermediate, staging), column schemas, resolved doc blocks, catalog profiling stats, MetricFlow semantic layer definitions, and test relationships.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_dir: {
+            type: 'string',
+            description: 'Optional absolute path to root dbt project directory. Defaults to current workspace or DBT_PROJECT_DIR.'
+          },
+          manifest_path: {
+            type: 'string',
+            description: 'Optional explicit path to compiled target/manifest.json artifact.'
+          },
+          catalog_path: {
+            type: 'string',
+            description: 'Optional explicit path to compiled target/catalog.json artifact for table stats & column profiling.'
+          },
+          include_docs: {
+            type: 'boolean',
+            description: 'Whether to parse docs/*.md blocks and resolve {{ doc(...) }} references (default: true)',
+            default: true
+          },
+          include_catalog: {
+            type: 'boolean',
+            description: 'Whether to ingest catalog.json table stats (row count, bytes, column profiling) (default: true)',
+            default: true
+          },
+          include_metrics: {
+            type: 'boolean',
+            description: 'Whether to parse MetricFlow semantic models, measures, and metrics (default: true)',
+            default: true
+          },
+          tier_filter: {
+            type: 'string',
+            enum: ['all', 'marts_fact', 'marts_dim', 'marts_report', 'intermediate', 'staging', 'raw'],
+            description: 'Optional architectural tier filter.'
+          },
+          filter_tiers: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['marts_fact', 'marts_dim', 'marts_report', 'intermediate', 'staging', 'raw']
+            },
+            description: 'Optional list of architectural tiers to filter results (e.g. ["marts_fact", "marts_dim"])'
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_lineage_joins_graph',
+      title: 'Multi-Hop Lineage & Semantic Join Graph Resolver',
+      description: '🔗 [dbt LINEAGE & MULTI-HOP JOINS] Build model dependency DAGs and resolve multi-hop semantic join paths (e.g. fct_orders -> dim_customers -> dim_regions) using dbt schema relationship tests, foreign keys, and MetricFlow entities. Generates validated ANSI SQL joins with confidence scoring.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_dir: {
+            type: 'string',
+            description: 'Optional absolute path to dbt project directory. Defaults to DBT_PROJECT_DIR or current workspace.'
+          },
+          manifest_path: {
+            type: 'string',
+            description: 'Optional explicit path to compiled target/manifest.json.'
+          },
+          source_model: {
+            type: 'string',
+            description: 'Starting source model name (e.g., "fct_orders"). Required for path finding and single-model lineage.'
+          },
+          target_model: {
+            type: 'string',
+            description: 'Destination target model name for join path discovery (e.g., "dim_regions").'
+          },
+          target_models: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of target models to resolve multiple multi-hop join paths simultaneously (e.g. ["dim_customers", "dim_regions", "dim_products"]).'
+          },
+          max_hops: {
+            type: 'number',
+            description: 'Maximum traversal distance / join hops (default: 5, min: 1, max: 20).',
+            default: 5
+          },
+          join_type: {
+            type: 'string',
+            enum: ['LEFT', 'INNER', 'RIGHT', 'FULL'],
+            description: 'SQL JOIN type to generate (default: "LEFT").',
+            default: 'LEFT'
+          },
+          include_sql: {
+            type: 'boolean',
+            description: 'Whether to generate syntactically valid ANSI SQL join snippet (default: true).',
+            default: true
+          },
+          direction: {
+            type: 'string',
+            enum: ['both', 'upstream', 'downstream'],
+            description: 'Lineage traversal direction when inspecting model dependencies (default: "both").',
+            default: 'both'
+          },
+          confidence_threshold: {
+            type: 'number',
+            description: 'Minimum confidence score threshold (0.0 to 1.0) for including inferred join paths (default: 0.5).',
+            default: 0.5
+          },
+          base_alias: {
+            type: 'string',
+            description: 'Optional table alias for the root source model in generated SQL.'
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_semantic_preagg_advisor',
+      title: 'Cube.js Pre-Aggregation & Rollup Advisor',
+      description: '⚡ [CUBE.JS PRE-AGGREGATION & ROLLUP ADVISOR] Formulate database-specific Pre-Aggregation and Rollup Materialized View DDL recommendations that accelerate repetitive analytical queries by 10x-100x. Supports additive, semi-additive, and non-additive metrics (HyperLogLog, sum/count decomposition) across PostgreSQL, BigQuery, Snowflake, ClickHouse, DuckDB, Redshift, and MySQL.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_dir: {
+            type: 'string',
+            description: 'Optional absolute path to dbt project directory. Defaults to DBT_PROJECT_DIR or current workspace.'
+          },
+          manifest_path: {
+            type: 'string',
+            description: 'Optional explicit path to compiled target/manifest.json.'
+          },
+          catalog_path: {
+            type: 'string',
+            description: 'Optional explicit path to target/catalog.json for physical row counts and column stats.'
+          },
+          model_name: {
+            type: 'string',
+            description: 'Target dbt model name to accelerate (e.g., "fct_orders", "marts_fact_sales"). If omitted, top fact models are analyzed.'
+          },
+          model_names: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of model names to analyze simultaneously.'
+          },
+          metrics: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of metric/measure names to include in the rollup (e.g. ["total_revenue", "order_count", "unique_customers"]).'
+          },
+          dimensions: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of dimension columns for slicing (e.g. ["customer_id", "status", "region", "product_category"]).'
+          },
+          time_dimension: {
+            type: 'string',
+            description: 'Optional timestamp/date column for time-grained rollup (e.g. "order_date", "created_at"). Auto-detected if omitted.'
+          },
+          time_grain: {
+            type: 'string',
+            enum: ['hour', 'day', 'week', 'month', 'quarter', 'year'],
+            description: 'Time grain for rollup date truncation (default: "day").',
+            default: 'day'
+          },
+          time_grains: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['hour', 'day', 'week', 'month', 'quarter', 'year']
+            },
+            description: 'Optional list of time grains to generate multi-tier rollup recommendations (e.g. ["day", "month"]).'
+          },
+          dialect: {
+            type: 'string',
+            enum: ['postgres', 'bigquery', 'snowflake', 'clickhouse', 'duckdb', 'redshift', 'mysql'],
+            description: 'Target SQL dialect for Materialized View DDL generation (default: "postgres").',
+            default: 'postgres'
+          },
+          target_schema: {
+            type: 'string',
+            description: 'Target schema or dataset name for pre-aggregation objects (default: "preagg").',
+            default: 'preagg'
+          },
+          refresh_strategy: {
+            type: 'string',
+            enum: ['auto', 'cron', 'concurrent', 'incremental', 'dbt_hook'],
+            description: 'Materialized view refresh strategy (default: "auto").',
+            default: 'auto'
+          },
+          refresh_interval_minutes: {
+            type: 'number',
+            description: 'Refresh schedule interval in minutes for automated rollups (default: 60).',
+            default: 60
+          },
+          include_hll: {
+            type: 'boolean',
+            description: 'Whether to generate HyperLogLog (HLL) sketch columns for non-additive distinct count metrics (default: true).',
+            default: true
+          },
+          min_speedup_factor: {
+            type: 'number',
+            description: 'Minimum estimated query speedup factor (e.g. 2 for 2x) required to recommend a pre-aggregation (default: 2.0).',
+            default: 2.0
+          },
+          include_indexes: {
+            type: 'boolean',
+            description: 'Whether to generate indexing and clustering DDL statements (default: true).',
+            default: true
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_build_dashboard_from_yaml',
+      title: 'Lightdash-Style Code-as-BI Dashboard Builder',
+      description: '🎨 [LIGHTDASH CODE-AS-BI DASHBOARD BUILDER] Build complete, publication-ready Metabase dashboards directly from dbt project YAML definitions (exposures.yml, semantic metrics, meta.metabase, and meta.lightdash). Constructs native Metabase Questions and Metabase Model cards (v50+), computes collision-free 24-column grid coordinates with executive visual hierarchy, and binds global interactive filter parameters in a single atomic operation.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_dir: {
+            type: 'string',
+            description: 'Optional absolute path to dbt project directory. Defaults to DBT_PROJECT_DIR or current workspace.'
+          },
+          manifest_path: {
+            type: 'string',
+            description: 'Optional explicit path to compiled target/manifest.json.'
+          },
+          catalog_path: {
+            type: 'string',
+            description: 'Optional explicit path to target/catalog.json.'
+          },
+          exposure_name: {
+            type: 'string',
+            description: 'Optional name of an exposure in exposures.yml to build into a dashboard (e.g. "executive_kpis", "finance_overview").'
+          },
+          dashboard_name: {
+            type: 'string',
+            description: 'Optional name for the created dashboard. Defaults to exposure label or generated dbt business domain title.'
+          },
+          dashboard_description: {
+            type: 'string',
+            description: 'Optional description for the created dashboard.'
+          },
+          yaml_content: {
+            type: 'string',
+            description: 'Optional raw inline YAML content containing exposures, metrics, or semantic models to construct dashboard from.'
+          },
+          yaml_path: {
+            type: 'string',
+            description: 'Optional path to YAML file on disk containing exposures, metrics, or dashboard specifications.'
+          },
+          database_id: {
+            type: 'number',
+            description: 'Metabase database ID to query. If omitted, defaults to 1 or auto-detected from connected database.'
+          },
+          collection_id: {
+            type: 'number',
+            description: 'Optional collection ID to save dashboard and questions to.'
+          },
+          theme: {
+            type: 'string',
+            enum: ['executive', 'modern_emerald', 'indigo_violet', 'amber_warm', 'slate_minimal', 'financial', 'operational', 'marketing', 'dark', 'custom'],
+            description: 'Visual layout and color theme (default: "executive").',
+            default: 'executive'
+          },
+          metrics: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of specific dbt metric/measure names to generate cards for (e.g. ["mrr", "active_users", "churn_rate"]).'
+          },
+          models: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of specific dbt models to build questions or model cards from.'
+          },
+          include_models: {
+            type: 'boolean',
+            description: 'Whether to create native Metabase Model cards (v50+) for underlying marts_fact and marts_dim models (default: true).',
+            default: true
+          },
+          create_models: {
+            type: 'boolean',
+            description: 'Alias for include_models (default: true).',
+            default: true
+          },
+          filters: {
+            type: 'array',
+            description: 'Optional explicit list of global dashboard filter configurations.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                slug: { type: 'string' },
+                type: { type: 'string', enum: ['date/all-options', 'date/range', 'date/single', 'category', 'string/=', 'number/='] },
+                target_variable: { type: 'string' },
+                default: { description: 'Default filter value' }
+              },
+              required: ['name']
+            }
+          },
+          cards: {
+            type: 'array',
+            description: 'Optional explicit custom card specifications to include in addition to dbt YAML definitions.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                sql: { type: 'string' },
+                display: { type: 'string' },
+                description: { type: 'string' },
+                row: { type: 'number' },
+                col: { type: 'number' },
+                size_x: { type: 'number' },
+                size_y: { type: 'number' }
+              },
+              required: ['name', 'sql']
+            }
+          },
+          dry_run: {
+            type: 'boolean',
+            description: 'If true, generates full dashboard plan, cards, and grid coordinates without writing to Metabase (default: false).',
+            default: false
+          },
+          mask_pii: {
+            type: 'boolean',
+            description: 'Whether to sanitize and mask sensitive PII in card preview samples (default: true).',
+            default: true
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_semantic_export_yaml',
+      title: 'Omni.co Controlled Semantic-to-YAML Exporter',
+      description: '🌉 [OMNI.CO CONTROLLED SEMANTIC-TO-YAML EXPORTER] Bridge Metabase analytics back to dbt by exporting approved (ACTIVE) business rules, metric definitions, and filter expressions from SemanticMemory into syntactically valid dbt schema.yml, semantic_models.yml, and metrics.yml code blocks. Preserves complete audit provenance, stakeholder sign-offs, and soft-deprecation audit trails with zero destructive mutation.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          format: {
+            type: 'string',
+            enum: ['all', 'models', 'semantic_models', 'metrics', 'schema_yml', 'consolidated'],
+            description: 'Target export format: "all" (returns all files), "models" (standard schema.yml), "semantic_models" (MetricFlow models), "metrics" (MetricFlow metrics), or "consolidated" (all in one YAML).'
+          },
+          target_model: {
+            type: 'string',
+            description: 'Optional target dbt model name to filter export for (e.g. "fct_subscriptions", "dim_customers"). If omitted, exports rules for all models.'
+          },
+          model_name: {
+            type: 'string',
+            description: 'Alias for target_model.'
+          },
+          status_filter: {
+            type: 'string',
+            enum: ['ACTIVE', 'ALL', 'DEPRECATED'],
+            description: 'Status of semantic rules to export (default: "ACTIVE"). Pending/unapproved rules are strictly excluded unless explicitly requested.',
+            default: 'ACTIVE'
+          },
+          categories: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['business_term', 'metric_definition', 'filter_rule', 'join_preference', 'exclusion_rule']
+            },
+            description: 'Optional list of specific rule categories to export.'
+          },
+          category: {
+            type: 'string',
+            enum: ['business_term', 'metric_definition', 'filter_rule', 'join_preference', 'exclusion_rule'],
+            description: 'Optional single rule category to export.'
+          },
+          rule_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional list of specific SemanticMemory rule IDs to export (e.g. ["rule_a1b2c3d4"]).'
+          },
+          include_deprecated: {
+            type: 'boolean',
+            description: 'Whether to include soft-deprecated rules as commented-out audit blocks in generated YAMLs (default: false).',
+            default: false
+          },
+          include_metricflow: {
+            type: 'boolean',
+            description: 'Whether to generate dbt Semantic Layer / MetricFlow semantic_models.yml and metrics.yml blocks (default: true).',
+            default: true
+          },
+          include_dbt_schema: {
+            type: 'boolean',
+            description: 'Whether to generate dbt core schema.yml blocks with column metadata and governance tags (default: true).',
+            default: true
+          },
+          include_provenance_header: {
+            type: 'boolean',
+            description: 'Whether to embed human-readable header and inline provenance comments (author, approval date, rule ID) (default: true).',
+            default: true
+          },
+          include_provenance_comments: {
+            type: 'boolean',
+            description: 'Alias for include_provenance_header (default: true).',
+            default: true
+          },
+          author: {
+            type: 'string',
+            description: 'Optional author name or email for export audit header.'
+          },
+          rationale: {
+            type: 'string',
+            description: 'Optional export rationale or justification note.'
+          },
+          project_dir: {
+            type: 'string',
+            description: 'Optional absolute path to dbt project directory for model and column validation.'
+          },
+          manifest_path: {
+            type: 'string',
+            description: 'Optional explicit path to target/manifest.json for validating exported column references.'
+          }
+        }
+      }
+    },
+    {
+      name: 'semantic_memory_propose',
+      title: 'Propose Business Rule (Pending Approval)',
+      description: '⚠️ [GOVERNANCE PROPOSAL] Propose a new business term, metric calculation, or filter rule. ⚠️ RULE IS NOT ACTIVE UNTIL EXPLICITLY APPROVED via semantic_memory_approve.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          term: {
+            type: 'string',
+            description: 'Business term or metric name (e.g., "Active Customer", "MRR", "Churned User")'
+          },
+          definition: {
+            type: 'string',
+            description: 'Detailed natural language definition of the business rule'
+          },
+          category: {
+            type: 'string',
+            enum: ['business_term', 'metric_definition', 'filter_rule', 'join_preference', 'exclusion_rule'],
+            description: 'Rule category (default: business_term)',
+            default: 'business_term'
+          },
+          comment: {
+            type: 'string',
+            description: 'Business justification or context for why this rule was proposed'
+          },
+          author: {
+            type: 'string',
+            description: 'Author / stakeholder name or email (e.g., "finance_lead@company.com")'
+          },
+          sql_condition: {
+            type: 'string',
+            description: 'Optional precise SQL predicate (e.g., "status = \'active\' AND is_trial = false")'
+          },
+          dbt_model_hint: {
+            type: 'string',
+            description: 'Optional recommended dbt mart model name (e.g., "fct_subscriptions")'
+          }
+        },
+        required: ['term', 'definition']
+      }
+    },
+    {
+      name: 'semantic_memory_approve',
+      title: 'Explicitly Approve Business Rule',
+      description: '✅ [GOVERNANCE APPROVAL] Explicitly approve a proposed business rule to make it ACTIVE. Once active, it will be automatically injected into BI query generation.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          rule_id: {
+            type: 'string',
+            description: 'Unique rule ID from semantic_memory_propose (e.g., "rule_a1b2c3d4")'
+          },
+          comment: {
+            type: 'string',
+            description: 'Mandatory approval notes or stakeholder sign-off'
+          },
+          author: {
+            type: 'string',
+            description: 'Name or email of the approving data steward / admin'
+          }
+        },
+        required: ['rule_id', 'comment']
+      }
+    },
+    {
+      name: 'semantic_memory_deprecate',
+      title: 'Soft-Deprecate / Archive Business Rule (No Hard-Delete)',
+      description: '🔒 [GOVERNANCE DEPRECATION] Safely soft-archive/comment-out an assistant-created rule with mandatory deprecation reason. NO HARD DELETION IS PERFORMED.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          rule_id: {
+            type: 'string',
+            description: 'Rule ID to deprecate'
+          },
+          reason: {
+            type: 'string',
+            description: 'Mandatory detailed reason for deprecating this rule (minimum 5 characters)'
+          },
+          author: {
+            type: 'string',
+            description: 'Name or email of the deprecating user'
+          }
+        },
+        required: ['rule_id', 'reason']
+      }
+    },
+    {
+      name: 'semantic_memory_list',
+      title: 'List Semantic Rules & Audit History',
+      description: '📚 [GOVERNANCE REGISTRY] List all business rules with their status (ACTIVE, PENDING_APPROVAL, DEPRECATED), stakeholder comments, and complete audit history.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['ACTIVE', 'PENDING_APPROVAL', 'DEPRECATED'],
+            description: 'Filter by rule status'
+          },
+          category: {
+            type: 'string',
+            enum: ['business_term', 'metric_definition', 'filter_rule', 'join_preference', 'exclusion_rule'],
+            description: 'Filter by category'
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_sync_metadata_to_metabase',
+      title: 'Sync dbt Metadata to Metabase Data Model',
+      description: '🔄 [dbt ➔ METABASE SYNC] Synchronize dbt table display names, column descriptions, semantic data types (type/Currency, type/CreationDate, type/Category, type/FK), and foreign keys directly into Metabase Data Model via API.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          database_id: {
+            type: 'number',
+            description: 'Metabase Database ID to sync metadata into'
+          },
+          dbt_project_dir: {
+            type: 'string',
+            description: 'Optional path to dbt project directory. Defaults to current workspace.'
+          },
+          dry_run: {
+            type: 'boolean',
+            description: 'Dry run mode to simulate changes without writing to Metabase (default: false)',
+            default: false
+          }
+        },
+        required: ['database_id']
+      }
+    },
+    {
+      name: 'dbt_sync_metrics_to_metabase',
+      title: 'Sync dbt Metrics to Official Metabase Metrics',
+      description: '📊 [dbt METRICS ➔ METABASE] Ingest dbt MetricFlow and YAML metric definitions into official Metabase Metrics (/api/metric) so users can select verified business formulas in the Metabase query builder.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          database_id: {
+            type: 'number',
+            description: 'Metabase Database ID to bind metrics to'
+          },
+          dbt_project_dir: {
+            type: 'string',
+            description: 'Optional path to dbt project directory.'
+          },
+          dry_run: {
+            type: 'boolean',
+            description: 'Simulate metric creation without writing (default: false)',
+            default: false
+          }
+        },
+        required: ['database_id']
+      }
+    },
+    {
+      name: 'dbt_generate_exposures_from_metabase',
+      title: 'Generate dbt Reverse Lineage Exposures from Metabase',
+      description: '🔁 [REVERSE LINEAGE] Scan all Metabase Dashboards and Questions, extract underlying dbt model dependencies (fct_, dim_, stg_), and generate models/exposures/_metabase__exposures.yml for dbt Docs and Lineage DAG.',
+      readOnlyHint: true,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          metabase_base_url: {
+            type: 'string',
+            description: 'Base URL of your Metabase instance (e.g. "https://metabase.company.com")'
+          },
+          include_dashboards: {
+            type: 'boolean',
+            description: 'Include dashboard exposures (default: true)',
+            default: true
+          },
+          include_cards: {
+            type: 'boolean',
+            description: 'Include standalone card question exposures (default: true)',
+            default: true
+          },
+          owner_name: {
+            type: 'string',
+            description: 'Owner name for dbt exposures'
+          },
+          owner_email: {
+            type: 'string',
+            description: 'Owner email for dbt exposures'
+          }
+        }
+      }
+    },
+    {
+      name: 'dbt_smart_create_card',
+      title: 'Create Verified Metabase Card with dbt Semantic Rules',
+      description: '🤖 [dbt SMART QUESTION] Natural language question to verified Metabase Question Card. Injects active dbt semantic rules, auto-heals SQL, applies zero-leak PII masking, and saves with optimal executive visual chart type.',
+      readOnlyHint: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            description: 'Natural language question (e.g. "Monthly net sales excluding delivery pay in Turna")'
+          },
+          database_id: {
+            type: 'number',
+            description: 'Metabase Database ID'
+          },
+          collection_id: {
+            type: 'number',
+            description: 'Optional collection ID to save the card into'
+          },
+          custom_name: {
+            type: 'string',
+            description: 'Optional custom name for the saved card'
+          },
+          description: {
+            type: 'string',
+            description: 'Optional card description'
+          },
+          dry_run: {
+            type: 'boolean',
+            description: 'Simulate without saving card to Metabase (default: false)',
+            default: false
+          }
+        },
+        required: ['question', 'database_id']
       }
     }
   ]);

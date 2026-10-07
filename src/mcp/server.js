@@ -26,24 +26,15 @@ import { ActionsHandler } from './handlers/actions.js';
 import { DocsHandler } from './handlers/docs.js';
 import { SchemaHandler } from './handlers/schema.js';
 import { AnalyticsHandler } from './handlers/analytics.js';
+import { DbtSemanticHandler } from './handlers/dbt-semantic.js';
 
 // Tool system
 import { getToolDefinitions } from './tool-registry.js';
-import { isReadOnlyMode } from './tool-router.js';
+import { isReadOnlyMode, WRITE_TOOLS } from './tool-router.js';
 
 // Utils
-import { CacheManager, CacheKeys, globalCache } from '../utils/cache.js';
+import { globalCache } from '../utils/cache.js';
 import { config as appConfig } from '../utils/config.js';
-import { getJobStore } from './job-store.js';
-import {
-  ResponseFormat,
-  formatListResponse,
-  formatSQLResult,
-  minimalDatabase,
-  minimalTable,
-  minimalDashboard,
-  minimalQuestion,
-} from '../utils/response-optimizer.js';
 
 // Load environment variables
 dotenv.config();
@@ -98,7 +89,15 @@ class MetabaseMCPServer {
 
       // Core handlers (no extra deps)
       this.metadataHandler = new MetadataHandler(this.metabaseClient);
-      this.dashboardDirectHandler = new DashboardDirectHandler(this.metabaseClient, this.metadataHandler);
+      this.dashboardDirectHandler = new DashboardDirectHandler(this.metabaseClient);
+      this.sqlHandler = new SqlHandler(this.metabaseClient);
+      this.cardsHandler = new CardsHandler(this.metabaseClient);
+      this.collectionsHandler = new CollectionsHandler(this.metabaseClient);
+      this.usersHandler = new UsersHandler(this.metabaseClient);
+      this.actionsHandler = new ActionsHandler(this.metabaseClient);
+      this.docsHandler = new DocsHandler(this.metabaseClient);
+      this.schemaHandler = new SchemaHandler(this.metabaseClient);
+      this.analyticsHandler = new AnalyticsHandler(this.metabaseClient);
 
       await this.metabaseClient.authenticate();
       logger.info('Metabase client initialized');
@@ -146,6 +145,7 @@ class MetabaseMCPServer {
       this.docsHandler = new DocsHandler(this.metabaseClient);
       this.schemaHandler = new SchemaHandler(this.metabaseClient, this.activityLogger);
       this.analyticsHandler = new AnalyticsHandler(this.metabaseClient, this.metadataClient, this.activityLogger);
+      this.dbtSemanticHandler = new DbtSemanticHandler(this.metabaseClient, this.aiAssistant, this.metadataClient);
     } catch (error) {
       logger.error('Failed to initialize MCP server:', error);
       this.initError = error;
@@ -167,6 +167,15 @@ class MetabaseMCPServer {
     // Tool dispatch
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+
+      // ── Read-only gate ──
+      if (isReadOnlyMode() && WRITE_TOOLS.has(name)) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `🔒 Read-only mode is active. The tool '${name}' is a write operation and has been blocked.\n` +
+          `To enable write operations, set \`METABASE_READ_ONLY_MODE=false\` in your environment.`
+        );
+      }
 
       try {
         await this.ensureInitialized();
@@ -352,9 +361,13 @@ class MetabaseMCPServer {
       case 'parametric_template_preset': return await this.schemaHandler.handleParametricTemplatePreset(args);
 
       // ── AI Assistance ──
+      case 'ai_sql_execute_and_heal': return await this.sqlHandler.handleExecuteAndHealSQL(args);
       case 'ai_sql_generate': return await this.sqlHandler.handleGenerateSQL(args);
       case 'ai_sql_optimize': return await this.sqlHandler.handleOptimizeQuery(args);
       case 'ai_sql_explain': return await this.sqlHandler.handleExplainQuery(args);
+      case 'ai_dashboard_build_full': return await this.cardsHandler.handleBuildFullDashboard(args);
+      case 'ai_query_index_advisor': return await this.analyticsHandler.handleQueryIndexAdvisor(args);
+      case 'ai_analytics_detect_anomalies': return await this.analyticsHandler.handleDetectAnomalies(args);
 
       // ── Activity Logging ──
       case 'activity_log_init': return await this.analyticsHandler.handleInitializeActivityLog(args);
@@ -392,34 +405,45 @@ class MetabaseMCPServer {
       case 'meta_lineage': return await this.metadataHandler.handleLineage(args);
       case 'meta_advanced_search': return await this.metadataHandler.handleAdvancedSearch(args);
 
+      // ── dbt & Semantic Layer (Governance-First) ──
+      case 'dbt_inspect_models': return await this.dbtSemanticHandler.handleDbtInspectModels(args);
+      case 'dbt_prioritize_sources': return await this.dbtSemanticHandler.handleDbtPrioritizeSources(args);
+      case 'dbt_project_scan_deep': return await this.dbtSemanticHandler.handleDbtProjectScanDeep(args);
+      case 'dbt_lineage_joins_graph': return await this.dbtSemanticHandler.handleDbtLineageJoinsGraph(args);
+      case 'dbt_semantic_preagg_advisor': return await this.dbtSemanticHandler.handleDbtSemanticPreaggAdvisor(args);
+      case 'dbt_build_dashboard_from_yaml': return await this.dbtSemanticHandler.handleDbtBuildDashboardFromYaml(args);
+      case 'dbt_semantic_export_yaml': return await this.dbtSemanticHandler.handleDbtSemanticExportYaml(args);
+      case 'dbt_sync_metadata_to_metabase': return await this.dbtSemanticHandler.handleDbtSyncMetadataToMetabase(args);
+      case 'dbt_sync_metrics_to_metabase': return await this.dbtSemanticHandler.handleDbtSyncMetricsToMetabase(args);
+      case 'dbt_generate_exposures_from_metabase': return await this.dbtSemanticHandler.handleDbtGenerateExposuresFromMetabase(args);
+      case 'dbt_smart_create_card': return await this.dbtSemanticHandler.handleDbtSmartCreateCard(args);
+      case 'semantic_memory_propose': return await this.dbtSemanticHandler.handleSemanticMemoryPropose(args);
+      case 'semantic_memory_approve': return await this.dbtSemanticHandler.handleSemanticMemoryApprove(args);
+      case 'semantic_memory_deprecate': return await this.dbtSemanticHandler.handleSemanticMemoryDeprecate(args);
+      case 'semantic_memory_restore': return await this.dbtSemanticHandler.handleSemanticMemoryRestore(args);
+      case 'semantic_memory_list': return await this.dbtSemanticHandler.handleSemanticMemoryList(args);
+
       default:
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
   }
 
   async run() {
+    await this.initialize();
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    await this.initialize();
     logger.info('Metabase AI Assistant MCP server running on stdio');
   }
 }
 
-// Run the server
-const server = new MetabaseMCPServer();
+export { MetabaseMCPServer };
 
-if (process.stdout.isTTY) {
-  console.log('🚀 Metabase AI Assistant MCP Server');
-  console.log('📦 Version 4.0.0');
-  console.log('🔧 Env: ' + (process.env.METABASE_URL || 'Not set'));
-  console.log('🔒 Read-only: ' + (isReadOnlyMode() ? 'YES' : 'NO'));
-  console.log('');
-  console.log('Starting MCP server...');
+// Run the server if executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const server = new MetabaseMCPServer();
+
+  server.run().catch((error) => {
+    logger.error('Failed to start MCP server:', error);
+    process.exit(1);
+  });
 }
-
-server.run().catch((error) => {
-  if (process.stdout.isTTY) {
-    console.error('❌ Failed to start MCP server:', error.message);
-  }
-  process.exit(1);
-});
