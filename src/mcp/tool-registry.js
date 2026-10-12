@@ -4054,7 +4054,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_update',
-      description: 'Update an existing card/question. Supports dataset_query (full object) or native_query (+ optional mongo_collection / template_tags). When METABASE_WRITABLE_COLLECTION_IDS is set, only cards in those collections can be mutated.',
+      description: 'Update an existing card/question. Supports dataset_query (full object) or native_query (+ optional mongo_collection / template_tags). Omitting mongo_collection on a Mongo card preserves the existing collection; if none exists the tool errors (no silent wipe). When METABASE_WRITABLE_COLLECTION_IDS is set, only cards in those collections can be mutated.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -4086,11 +4086,11 @@ export function getToolDefinitions() {
           },
           native_query: {
             type: 'string',
-            description: 'Convenience: set native query text (SQL or Mongo aggregation JSON string). Merges into existing native dataset_query.'
+            description: 'Convenience: set native query text (SQL or Mongo aggregation JSON string). Merges into existing native dataset_query (classic or lib/stages).'
           },
           mongo_collection: {
             type: 'string',
-            description: 'Mongo collection name for native Mongo questions (with native_query)'
+            description: 'Mongo collection for native Mongo questions. Omit to preserve the card\'s existing collection; required only when the card has none.'
           },
           template_tags: {
             description: 'Native template-tags object (or JSON string), used with native_query',
