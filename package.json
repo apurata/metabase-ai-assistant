@@ -99,6 +99,7 @@
     "express": "^4.21.2",
     "he": "^1.2.0",
     "inquirer": "^12.9.3",
+    "js-yaml": "^5.4.3",
     "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.14.3",
     "openai": "^4.26.0",
