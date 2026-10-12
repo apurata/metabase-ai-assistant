@@ -111,6 +111,94 @@ export class CardsHandler {
     return `${query.slice(0, NATIVE_QUERY_TEXT_MAX)}\n… [truncated ${query.length - NATIVE_QUERY_TEXT_MAX} chars]`;
   }
 
+  /**
+   * True when dataset_query is native Mongo (classic or lib/stages), even if
+   * collection is blank. SQL native queries have no `collection` key.
+   */
+  isMongoNativeDatasetQuery(datasetQuery) {
+    if (!datasetQuery || typeof datasetQuery !== 'object') return false;
+
+    if (datasetQuery.type === 'native' && datasetQuery.native && typeof datasetQuery.native === 'object') {
+      return Object.prototype.hasOwnProperty.call(datasetQuery.native, 'collection');
+    }
+
+    if (datasetQuery['lib/type'] === 'mbql/query' && Array.isArray(datasetQuery.stages)) {
+      const stage = datasetQuery.stages[0] || {};
+      if (stage['lib/type'] === 'mbql.stage/native' || stage.native != null) {
+        if (Object.prototype.hasOwnProperty.call(stage, 'collection')) return true;
+        return (
+          stage.native &&
+          typeof stage.native === 'object' &&
+          Object.prototype.hasOwnProperty.call(stage.native, 'collection')
+        );
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Build classic `type:native` dataset_query for mb_card_update native_query.
+   * Preserves Mongo collection / template-tags from classic or lib/stages cards
+   * when the caller omits them (DEV-828).
+   */
+  buildNativeDatasetQueryUpdate(existingCard, nativeQuery, mongoCollection, templateTags) {
+    const current = existingCard?.dataset_query || {};
+    const database = current.database ?? existingCard?.database_id;
+    const parts = this.extractNativeParts(current);
+    const prevNative =
+      current.type === 'native' && current.native && typeof current.native === 'object'
+        ? current.native
+        : {};
+
+    const explicitCollection =
+      mongoCollection !== undefined && mongoCollection !== null && String(mongoCollection).trim() !== ''
+        ? String(mongoCollection).trim()
+        : undefined;
+    const preservedCollection =
+      typeof parts.collection === 'string' && parts.collection.trim() !== ''
+        ? parts.collection.trim()
+        : undefined;
+    const collection = explicitCollection ?? preservedCollection;
+    const isMongo =
+      explicitCollection !== undefined ||
+      this.isMongoNativeDatasetQuery(current) ||
+      preservedCollection !== undefined;
+
+    if (isMongo && !collection) {
+      throw new Error(
+        'Mongo native update requires mongo_collection (card has no persisted collection to preserve)'
+      );
+    }
+
+    const native = {
+      ...prevNative,
+      query: nativeQuery,
+    };
+
+    if (collection) {
+      native.collection = collection;
+    }
+
+    if (templateTags !== undefined) {
+      native['template-tags'] =
+        typeof templateTags === 'string' ? JSON.parse(templateTags) : templateTags;
+    } else if (
+      native['template-tags'] === undefined &&
+      parts.templateTags &&
+      typeof parts.templateTags === 'object'
+    ) {
+      // Lib/stages cards do not put tags on classic prevNative; keep them when rewriting.
+      native['template-tags'] = parts.templateTags;
+    }
+
+    return {
+      type: 'native',
+      database,
+      native,
+    };
+  }
+
   async assertCardWritable(cardId, action, targetCollectionId) {
     const card = await this.metabaseClient.request('GET', `/api/card/${cardId}`);
     const effectiveCollectionId =
@@ -250,7 +338,7 @@ export class CardsHandler {
     const { card_id, dataset_query, native_query, mongo_collection, template_tags, ...rest } = args;
 
     try {
-      await this.assertCardWritable(card_id, 'mb_card_update', rest.collection_id);
+      const existing = await this.assertCardWritable(card_id, 'mb_card_update', rest.collection_id);
 
       const updates = { ...rest };
 
@@ -258,27 +346,13 @@ export class CardsHandler {
         updates.dataset_query =
           typeof dataset_query === 'string' ? JSON.parse(dataset_query) : dataset_query;
       } else if (native_query !== undefined) {
-        const existing = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
-        const current = existing.dataset_query || {};
-        const database = current.database ?? existing.database_id;
-        const prevNative = current.type === 'native' && typeof current.native === 'object'
-          ? current.native
-          : {};
-        updates.dataset_query = {
-          type: 'native',
-          database,
-          native: {
-            ...prevNative,
-            query: native_query,
-            ...(mongo_collection !== undefined ? { collection: mongo_collection } : {}),
-            ...(template_tags !== undefined
-              ? {
-                  'template-tags':
-                    typeof template_tags === 'string' ? JSON.parse(template_tags) : template_tags,
-                }
-              : {}),
-          },
-        };
+        // Reuse the allowlist GET; merge collection from classic or lib/stages (DEV-828).
+        updates.dataset_query = this.buildNativeDatasetQueryUpdate(
+          existing,
+          native_query,
+          mongo_collection,
+          template_tags
+        );
       }
 
       const card = await this.metabaseClient.request('PUT', `/api/card/${card_id}`, updates);
