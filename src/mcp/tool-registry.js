@@ -1405,7 +1405,8 @@ export function getToolDefinitions() {
     // === METABASE OBJECTS ===
     {
       name: 'mb_question_create',
-      description: 'Create new question/chart',
+      description:
+        'Create a new question/chart. SQL mode: pass sql. Mongo native mode: pass native_query (aggregation pipeline JSON string) + mongo_collection. Do not pass both sql and native_query.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1423,14 +1424,45 @@ export function getToolDefinitions() {
           },
           sql: {
             type: 'string',
-            description: 'SQL query for the question',
+            description: 'SQL query (SQL mode). Mutually exclusive with native_query.',
+          },
+          native_query: {
+            type: 'string',
+            description:
+              'Mongo aggregation pipeline as a JSON string (Mongo native mode). Requires mongo_collection. Mutually exclusive with sql.',
+          },
+          mongo_collection: {
+            type: 'string',
+            description: 'Mongo collection name (required with native_query)',
+          },
+          display: {
+            type: 'string',
+            description: 'Chart type (Mongo native mode; default table)',
+            enum: [
+              'table',
+              'bar',
+              'line',
+              'area',
+              'pie',
+              'scatter',
+              'funnel',
+              'map',
+              'row',
+              'waterfall',
+              'combo',
+              'gauge',
+              'progress',
+              'scalar',
+              'smartscalar',
+              'pivot',
+            ],
           },
           collection_id: {
             type: 'number',
             description: 'Collection ID to save the question to (optional)',
           },
         },
-        required: ['name', 'description', 'database_id', 'sql'],
+        required: ['name', 'description', 'database_id'],
       },
     },
     {
