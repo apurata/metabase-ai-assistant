@@ -145,7 +145,54 @@ export class CardsHandler extends BaseHandler {
 
   async handleCreateQuestion(args) {
     try {
+      const hasSql = typeof args.sql === 'string' && args.sql.trim().length > 0;
+      const hasNative =
+        typeof args.native_query === 'string' && args.native_query.trim().length > 0;
+
+      if (hasSql && hasNative) {
+        throw new Error('Pass either sql or native_query (+ mongo_collection), not both');
+      }
+      if (!hasSql && !hasNative) {
+        throw new Error('Either sql or native_query (+ mongo_collection) is required');
+      }
+
       assertWritableCollection(args.collection_id, 'mb_question_create');
+
+      if (hasNative) {
+        if (typeof args.mongo_collection !== 'string' || !args.mongo_collection.trim()) {
+          throw new Error('mongo_collection is required with native_query for Mongo native questions');
+        }
+        const question = await this.metabaseClient.createQuestion({
+          name: args.name,
+          description: args.description,
+          database_id: args.database_id,
+          collection_id: args.collection_id,
+          display: args.display || 'table',
+          dataset_query: {
+            type: 'native',
+            database: args.database_id,
+            native: {
+              query: args.native_query,
+              collection: args.mongo_collection,
+            },
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `Question created successfully!\n` +
+                `Name: ${question.name}\n` +
+                `ID: ${question.id}\n` +
+                `Mongo collection: ${args.mongo_collection}\n` +
+                `URL: ${process.env.METABASE_URL}/question/${question.id}`,
+            },
+          ],
+        };
+      }
+
       const question = await this.metabaseClient.createSQLQuestion(
         args.name,
         args.description,

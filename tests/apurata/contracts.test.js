@@ -48,6 +48,7 @@ describe('Apurata CardsHandler contracts', () => {
     mockClient = {
       request: jest.fn(),
       createSQLQuestion: jest.fn().mockResolvedValue({ id: 1, name: 'Q' }),
+      createQuestion: jest.fn().mockResolvedValue({ id: 99, name: 'Mongo Q' }),
     };
     handler = new CardsHandler(mockClient);
   });
@@ -60,12 +61,84 @@ describe('Apurata CardsHandler contracts', () => {
   test('mb_question_create blocked outside allowlist', async () => {
     const res = await handler.handleCreateQuestion({
       name: 'x',
+      description: 'd',
       database_id: 2,
       sql: 'SELECT 1',
       collection_id: 1,
     });
     expect(res.content[0].text).toMatch(/Write blocked|Create question error/);
     expect(mockClient.createSQLQuestion).not.toHaveBeenCalled();
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
+  });
+
+  test('mb_question_create native Mongo builds dataset_query with collection', async () => {
+    const res = await handler.handleCreateQuestion({
+      name: 'Mongo Q',
+      description: 'SFP smoke',
+      database_id: 2,
+      native_query: '[{"$limit":1}]',
+      mongo_collection: 'pos_client',
+      collection_id: 481,
+    });
+    expect(res.content[0].text).toMatch(/Question created successfully/);
+    expect(res.content[0].text).toMatch(/Mongo collection: pos_client/);
+    expect(mockClient.createSQLQuestion).not.toHaveBeenCalled();
+    expect(mockClient.createQuestion).toHaveBeenCalledWith({
+      name: 'Mongo Q',
+      description: 'SFP smoke',
+      database_id: 2,
+      collection_id: 481,
+      display: 'table',
+      dataset_query: {
+        type: 'native',
+        database: 2,
+        native: {
+          query: '[{"$limit":1}]',
+          collection: 'pos_client',
+        },
+      },
+    });
+  });
+
+  test('mb_question_create native without mongo_collection fails closed', async () => {
+    const res = await handler.handleCreateQuestion({
+      name: 'Mongo Q',
+      description: 'd',
+      database_id: 2,
+      native_query: '[{"$limit":1}]',
+      collection_id: 481,
+    });
+    expect(res.content[0].text).toMatch(/mongo_collection is required/);
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
+    expect(mockClient.createSQLQuestion).not.toHaveBeenCalled();
+  });
+
+  test('mb_question_create native blocked outside allowlist', async () => {
+    const res = await handler.handleCreateQuestion({
+      name: 'Mongo Q',
+      description: 'd',
+      database_id: 2,
+      native_query: '[{"$limit":1}]',
+      mongo_collection: 'lend',
+      collection_id: 1,
+    });
+    expect(res.content[0].text).toMatch(/Write blocked|Create question error/);
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
+  });
+
+  test('mb_question_create rejects sql and native_query together', async () => {
+    const res = await handler.handleCreateQuestion({
+      name: 'x',
+      description: 'd',
+      database_id: 2,
+      sql: 'SELECT 1',
+      native_query: '[{"$limit":1}]',
+      mongo_collection: 'lend',
+      collection_id: 481,
+    });
+    expect(res.content[0].text).toMatch(/not both/);
+    expect(mockClient.createSQLQuestion).not.toHaveBeenCalled();
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
   });
 
   test('mb_card_update native_query + mongo_collection builds native dataset_query', async () => {
@@ -326,6 +399,12 @@ describe('Apurata tool registry surface', () => {
     const update = tools.find((t) => t.name === 'mb_card_update');
     expect(update.inputSchema.properties.native_query).toBeDefined();
     expect(update.inputSchema.properties.mongo_collection).toBeDefined();
+
+    const create = tools.find((t) => t.name === 'mb_question_create');
+    expect(create.inputSchema.properties.native_query).toBeDefined();
+    expect(create.inputSchema.properties.mongo_collection).toBeDefined();
+    expect(create.inputSchema.required).toEqual(['name', 'description', 'database_id']);
+    expect(create.inputSchema.required).not.toContain('sql');
 
     const data = tools.find((t) => t.name === 'mb_card_data');
     expect(data.inputSchema.properties.max_rows).toBeDefined();
