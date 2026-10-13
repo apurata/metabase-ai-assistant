@@ -4,7 +4,7 @@
  * and generates standard dbt exposures YAML (models/exposures/_metabase__exposures.yml).
  */
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { logger } from '../utils/logger.js';
 
 export class MetabaseReverseLineage {

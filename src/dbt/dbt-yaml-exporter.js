@@ -8,7 +8,7 @@
  * Strictly non-destructive and read-only: generates valid YAML strings in-memory.
  */
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { globalSemanticMemory, RULE_STATUS } from '../semantic/semantic-memory.js';
 
 export const EXPORT_FORMATS = {

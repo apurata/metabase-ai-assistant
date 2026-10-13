@@ -8,7 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { DBT_TIERS, DbtParser } from './dbt-parser.js';
 import { logger } from '../utils/logger.js';
 
