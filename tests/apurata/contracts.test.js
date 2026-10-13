@@ -13,6 +13,14 @@ import {
   resolveDashboardTabId,
   summarizeCollections,
 } from '../../src/mcp/dashboard-layout.js';
+import {
+  inferParamTypeFromValue,
+  normalizeCardQueryParameters,
+} from '../../src/mcp/card-query-params.js';
+import {
+  buildNativeDatasetQueryUpdate,
+  mergeVisualizationSettings,
+} from '../../src/mcp/native-card-update.js';
 
 describe('Apurata write-guards', () => {
   const prev = process.env.METABASE_WRITABLE_COLLECTION_IDS;
@@ -143,15 +151,28 @@ describe('Apurata CardsHandler contracts', () => {
 
   test('mb_card_update native_query + mongo_collection builds native dataset_query', async () => {
     mockClient.request
-      .mockResolvedValueOnce({ id: 42, collection_id: 481 }) // assertCardWritable GET
       .mockResolvedValueOnce({
         id: 42,
         collection_id: 481,
         database_id: 2,
+        parameters: [
+          {
+            id: 'created-id-1',
+            slug: 'created',
+            type: 'date/relative',
+            target: ['dimension', ['template-tag', 'created']],
+          },
+        ],
         dataset_query: {
           type: 'native',
           database: 2,
-          native: { query: '[]', collection: 'old_col' },
+          native: {
+            query: '[]',
+            collection: 'old_col',
+            'template-tags': {
+              created: { id: 'created-id-1', name: 'created', type: 'dimension' },
+            },
+          },
         },
       })
       .mockResolvedValueOnce({
@@ -177,7 +198,90 @@ describe('Apurata CardsHandler contracts', () => {
       native: {
         query: '[{"$limit":1}]',
         collection: 'lend',
+        'template-tags': {
+          created: { id: 'created-id-1', name: 'created', type: 'dimension' },
+        },
       },
+    });
+    expect(put[2].parameters).toEqual([
+      {
+        id: 'created-id-1',
+        slug: 'created',
+        type: 'date/relative',
+        target: ['dimension', ['template-tag', 'created']],
+      },
+    ]);
+  });
+
+  test('mb_card_update native_query on lib/stages preserves shape, tags, and parameters ids', async () => {
+    const stagesQuery = {
+      'lib/type': 'mbql/query',
+      database: 2,
+      stages: [
+        {
+          'lib/type': 'mbql.stage/native',
+          collection: 'lend',
+          native: '[{"$limit":1}]',
+          'template-tags': {
+            created: {
+              id: 'tag-uuid-1',
+              name: 'created',
+              type: 'dimension',
+              'widget-type': 'date/relative',
+            },
+          },
+        },
+      ],
+    };
+    const parameters = [
+      {
+        id: 'tag-uuid-1',
+        slug: 'created',
+        type: 'date/relative',
+        target: ['dimension', ['template-tag', 'created']],
+      },
+    ];
+    mockClient.request
+      .mockResolvedValueOnce({
+        id: 2397,
+        collection_id: 481,
+        database_id: 2,
+        parameters,
+        visualization_settings: {
+          'graph.dimensions': ['day'],
+          stackable: { stack_type: 'stacked' },
+          'graph.metrics': ['count'],
+        },
+        dataset_query: stagesQuery,
+      })
+      .mockResolvedValueOnce({
+        id: 2397,
+        dataset_query: stagesQuery,
+      });
+
+    const res = await handler.handleCardUpdate({
+      card_id: 2397,
+      native_query: '[{"$match":{"x":1}}]',
+      visualization_settings: {
+        stackable: { stack_type: 'normalized' },
+        'graph.dimensions': ['day', 'band'],
+      },
+    });
+    expect(res.content[0].text).toMatch(/updated successfully/);
+    const put = mockClient.request.mock.calls.find((c) => c[0] === 'PUT');
+    expect(put[2].dataset_query['lib/type']).toBe('mbql/query');
+    expect(put[2].dataset_query.stages[0]).toMatchObject({
+      collection: 'lend',
+      native: '[{"$match":{"x":1}}]',
+      'template-tags': {
+        created: expect.objectContaining({ id: 'tag-uuid-1' }),
+      },
+    });
+    expect(put[2].parameters).toEqual(parameters);
+    expect(put[2].visualization_settings).toEqual({
+      'graph.dimensions': ['day', 'band'],
+      stackable: { stack_type: 'normalized' },
+      'graph.metrics': ['count'],
     });
   });
 
@@ -212,6 +316,7 @@ describe('Apurata CardsHandler contracts', () => {
     const rows = Array.from({ length: 5 }, (_, i) => [i]);
     mockClient.request.mockResolvedValueOnce({
       data: { rows, cols: [{ name: 'n', display_name: 'n' }] },
+      running_time: 42,
     });
 
     const res = await handler.handleCardData({ card_id: 1, max_rows: 2 });
@@ -220,6 +325,129 @@ describe('Apurata CardsHandler contracts', () => {
     expect(res.structuredContent.max_rows).toBe(2);
     expect(res.structuredContent.truncated).toBe(true);
     expect(res.structuredContent.rows).toHaveLength(2);
+    expect(res.structuredContent.running_time).toBe(42);
+    expect(res.content[0].text).toMatch(/running_time_ms: 42/);
+  });
+
+  test('mb_card_data shorthand parameters resolve via card and send Metabase array', async () => {
+    delete process.env.METABASE_WRITABLE_COLLECTION_IDS;
+    mockClient.request
+      .mockResolvedValueOnce({
+        id: 2397,
+        parameters: [
+          {
+            id: 'created-id-1',
+            slug: 'created',
+            name: 'Created',
+            type: 'date/relative',
+            target: ['dimension', ['template-tag', 'created']],
+          },
+        ],
+        dataset_query: { type: 'native', database: 2, native: { query: '[]', collection: 'lend' } },
+      })
+      .mockResolvedValueOnce({
+        data: { rows: [[1]], cols: [{ name: 'n', display_name: 'n' }] },
+        running_time: 100,
+      });
+
+    const res = await handler.handleCardData({
+      card_id: 2397,
+      parameters: { created: 'past120days~' },
+      ignore_cache: true,
+    });
+
+    expect(mockClient.request).toHaveBeenNthCalledWith(1, 'GET', '/api/card/2397');
+    expect(mockClient.request).toHaveBeenNthCalledWith(
+      2,
+      'POST',
+      '/api/card/2397/query',
+      {
+        ignore_cache: true,
+        parameters: [
+          {
+            id: 'created-id-1',
+            type: 'date/relative',
+            target: ['dimension', ['template-tag', 'created']],
+            value: 'past120days~',
+          },
+        ],
+      }
+    );
+    expect(res.structuredContent.ignore_cache).toBe(true);
+    expect(res.structuredContent.error).toBeNull();
+    expect(res.content[0].text).toMatch(/ignore_cache: true/);
+  });
+
+  test('mb_card_data error responses include structuredContent for Cursor', async () => {
+    delete process.env.METABASE_WRITABLE_COLLECTION_IDS;
+    mockClient.request.mockRejectedValueOnce(new Error('status 500 boom'));
+
+    const res = await handler.handleCardData({ card_id: 7 });
+    expect(res.content[0].text).toMatch(/Card data error/);
+    expect(res.structuredContent).toMatchObject({
+      card_id: 7,
+      columns: [],
+      rows: [],
+      row_count: 0,
+      returned_row_count: 0,
+      truncated: false,
+      error: 'status 500 boom',
+    });
+  });
+
+  test('mb_dashboard_add_text creates virtual card and respects allowlist', async () => {
+    process.env.METABASE_WRITABLE_COLLECTION_IDS = '481';
+    mockClient.request
+      .mockResolvedValueOnce({
+        id: 418,
+        name: '0.11 Experian income',
+        collection_id: 481,
+        tabs: [],
+        dashcards: [],
+      })
+      .mockResolvedValueOnce({
+        id: 418,
+        name: '0.11 Experian income',
+        collection_id: 481,
+        tabs: [],
+        dashcards: [
+          {
+            id: 77,
+            card_id: null,
+            row: 0,
+            col: 0,
+            size_x: 18,
+            size_y: 2,
+            dashboard_tab_id: null,
+            visualization_settings: {
+              text: 'Precio unitario: S/ 1.00',
+              virtual_card: { display: 'text' },
+            },
+          },
+        ],
+      });
+
+    const res = await handler.handleDashboardAddText({
+      dashboard_id: 418,
+      text: 'Precio unitario: S/ 1.00',
+      row: 0,
+      col: 0,
+    });
+    expect(res.content[0].text).toMatch(/text added/i);
+    expect(res.structuredContent).toMatchObject({
+      dashboard_id: 418,
+      dashcard_id: 77,
+      display: 'text',
+    });
+    const put = mockClient.request.mock.calls.find((c) => c[0] === 'PUT');
+    expect(put[2].dashcards.at(-1)).toMatchObject({
+      id: -1,
+      card_id: null,
+      visualization_settings: expect.objectContaining({
+        text: 'Precio unitario: S/ 1.00',
+        virtual_card: expect.objectContaining({ display: 'text' }),
+      }),
+    });
   });
 
   test('mb_dashboard_get coerces null description to empty string for Cursor', async () => {
@@ -385,6 +613,98 @@ describe('Apurata dashboard-layout helpers', () => {
   });
 });
 
+describe('Apurata card-query-params', () => {
+  test('infers relative date types and expands shorthand from template-tags', () => {
+    expect(inferParamTypeFromValue('past120days~')).toBe('date/relative');
+    const normalized = normalizeCardQueryParameters(
+      { created: 'past120days~' },
+      {
+        parameters: [],
+        dataset_query: {
+          'lib/type': 'mbql/query',
+          stages: [
+            {
+              'lib/type': 'mbql.stage/native',
+              collection: 'lend',
+              native: '[]',
+              'template-tags': {
+                created: {
+                  id: 'tag-uuid-1',
+                  name: 'created',
+                  type: 'dimension',
+                  'widget-type': 'date/relative',
+                },
+              },
+            },
+          ],
+        },
+      }
+    );
+    expect(normalized).toEqual([
+      {
+        id: 'tag-uuid-1',
+        type: 'date/relative',
+        target: ['dimension', ['template-tag', 'created']],
+        value: 'past120days~',
+      },
+    ]);
+  });
+});
+
+describe('Apurata native-card-update', () => {
+  test('preserves lib/stages and requires mongo_collection when missing', () => {
+    const card = {
+      database_id: 2,
+      dataset_query: {
+        'lib/type': 'mbql/query',
+        database: 2,
+        stages: [
+          {
+            'lib/type': 'mbql.stage/native',
+            collection: 'lend',
+            native: '[]',
+            'template-tags': { created: { id: 't1', type: 'dimension' } },
+          },
+        ],
+      },
+    };
+    const updated = buildNativeDatasetQueryUpdate(card, '[{"$limit":2}]', undefined, undefined);
+    expect(updated['lib/type']).toBe('mbql/query');
+    expect(updated.stages[0].native).toBe('[{"$limit":2}]');
+    expect(updated.stages[0].collection).toBe('lend');
+    expect(updated.stages[0]['template-tags'].created.id).toBe('t1');
+
+    expect(() =>
+      buildNativeDatasetQueryUpdate(
+        {
+          database_id: 2,
+          dataset_query: {
+            type: 'native',
+            database: 2,
+            native: { query: '[]', collection: '' },
+          },
+        },
+        '[]',
+        undefined,
+        undefined
+      )
+    ).toThrow(/mongo_collection/);
+  });
+
+  test('mergeVisualizationSettings keeps sibling keys', () => {
+    expect(
+      mergeVisualizationSettings(
+        { stackable: { stack_type: 'stacked', foo: 1 }, 'graph.metrics': ['a'] },
+        { stackable: { stack_type: 'normalized' }, 'graph.dimensions': ['d'] }
+      )
+    ).toEqual({
+      stackable: { stack_type: 'normalized', foo: 1 },
+      'graph.metrics': ['a'],
+      'graph.dimensions': ['d'],
+    });
+  });
+});
+
 describe('Apurata tool registry surface', () => {
   test('registers tab create, native_query update, and max_rows on card data', () => {
     expect(TOOL_METADATA.mb_dashboard_tab_create).toBeDefined();
@@ -394,6 +714,7 @@ describe('Apurata tool registry surface', () => {
     ]);
     expect(TOOL_METADATA.mb_dashboard_get.outputSchema.properties.tabs).toBeDefined();
     expect(TOOL_METADATA.mb_card_data.outputSchema.properties.max_rows).toBeDefined();
+    expect(TOOL_METADATA.mb_card_data.outputSchema.properties.running_time).toBeDefined();
 
     const tools = getToolDefinitions();
     const update = tools.find((t) => t.name === 'mb_card_update');
@@ -408,8 +729,14 @@ describe('Apurata tool registry surface', () => {
 
     const data = tools.find((t) => t.name === 'mb_card_data');
     expect(data.inputSchema.properties.max_rows).toBeDefined();
+    expect(data.inputSchema.properties.ignore_cache).toBeDefined();
+    expect(data.inputSchema.properties.parameters.oneOf).toBeDefined();
 
     const tab = tools.find((t) => t.name === 'mb_dashboard_tab_create');
     expect(tab).toBeDefined();
+
+    const addText = tools.find((t) => t.name === 'mb_dashboard_add_text');
+    expect(addText).toBeDefined();
+    expect(TOOL_METADATA.mb_dashboard_add_text.write).toBe(true);
   });
 });

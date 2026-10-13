@@ -548,7 +548,10 @@ export const TOOL_METADATA = {
         row_count: { type: 'number' },
         returned_row_count: { type: 'number' },
         max_rows: { type: 'number' },
-        truncated: { type: 'boolean' }
+        truncated: { type: 'boolean' },
+        running_time: { type: ['number', 'null'] },
+        ignore_cache: { type: 'boolean' },
+        error: { type: ['string', 'null'] }
       },
       required: ['card_id', 'columns', 'rows', 'row_count', 'returned_row_count', 'max_rows', 'truncated']
     }
@@ -575,6 +578,27 @@ export const TOOL_METADATA = {
   },
   mb_dashboard_template_executive: { title: 'Create Executive Dashboard', write: true, destructive: false, idempotent: false },
   mb_dashboard_add_card: { title: 'Add Card to Dashboard', write: true, destructive: false, idempotent: false },
+  mb_dashboard_add_text: {
+    title: 'Add Text/Heading to Dashboard',
+    write: true,
+    destructive: false,
+    idempotent: false,
+    outputSchema: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        dashboard_id: { type: 'number' },
+        dashcard_id: { type: ['number', 'null'] },
+        display: { type: 'string' },
+        text: { type: ['string', 'null'] },
+        dashboard_tab_id: { type: ['number', 'null'] },
+        row: { type: ['number', 'null'] },
+        col: { type: ['number', 'null'] },
+        error: { type: 'string' },
+      },
+      required: ['dashboard_id']
+    }
+  },
   mb_dashboard_tab_create: {
     title: 'Create Dashboard Tab', write: true, destructive: false, idempotent: false,
     outputSchema: {
@@ -1706,6 +1730,48 @@ export function getToolDefinitions() {
           },
         },
         required: ['dashboard_id', 'name'],
+      },
+    },
+    {
+      name: 'mb_dashboard_add_text',
+      description: 'Add or edit a Metabase virtual text/heading box on a dashboard (card_id null + visualization_settings.virtual_card). Prefer this over faking a legend table. When the dashboard has tabs, dashboard_tab_id is required. Pass dashcard_id to update an existing virtual card.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          dashboard_id: {
+            type: 'number',
+            description: 'Dashboard ID',
+          },
+          text: {
+            type: 'string',
+            description: 'Markdown/plain text for the box (required on create)',
+          },
+          display: {
+            type: 'string',
+            enum: ['text', 'heading'],
+            default: 'text',
+            description: 'Virtual card kind: text (default) or heading',
+          },
+          row: { type: 'number', description: 'Grid row (0-based)', default: 0 },
+          col: { type: 'number', description: 'Grid column (0-based)', default: 0 },
+          size_x: {
+            type: 'number',
+            description: 'Width in grid units (default 18 for text, 24 for heading)',
+          },
+          size_y: {
+            type: 'number',
+            description: 'Height in grid units (default 2 for text, 1 for heading)',
+          },
+          dashboard_tab_id: {
+            type: 'number',
+            description: 'Target tab id. Required when the dashboard has tabs.',
+          },
+          dashcard_id: {
+            type: 'number',
+            description: 'Existing virtual dashcard id to update (omit to create)',
+          },
+        },
+        required: ['dashboard_id'],
       },
     },
     {
@@ -4054,7 +4120,7 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_update',
-      description: 'Update an existing card/question. Supports dataset_query (full object) or native_query (+ optional mongo_collection / template_tags). Omitting mongo_collection on a Mongo card preserves the existing collection; if none exists the tool errors (no silent wipe). When METABASE_WRITABLE_COLLECTION_IDS is set, only cards in those collections can be mutated.',
+      description: 'Update an existing card/question. native_query merges into classic type:native or lib/stages in place (preserves mongo collection, template-tags, and parameters[].id). visualization_settings is one-level deep-merged. When METABASE_WRITABLE_COLLECTION_IDS is set, only allowlisted collections can be mutated.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -4066,7 +4132,7 @@ export function getToolDefinitions() {
           description: { type: 'string', description: 'New description' },
           visualization_settings: {
             type: 'object',
-            description: 'New visualization settings'
+            description: 'Partial visualization settings (merged into existing; e.g. stackable.stack_type, graph.dimensions, graph.metrics)'
           },
           display: {
             type: 'string',
@@ -4086,16 +4152,23 @@ export function getToolDefinitions() {
           },
           native_query: {
             type: 'string',
-            description: 'Convenience: set native query text (SQL or Mongo aggregation JSON string). Merges into existing native dataset_query (classic or lib/stages).'
+            description: 'Native query text (SQL or Mongo aggregation JSON string). Merges without rewriting lib/stages to classic type:native.'
           },
           mongo_collection: {
             type: 'string',
             description: 'Mongo collection for native Mongo questions. Omit to preserve the card\'s existing collection; required only when the card has none.'
           },
           template_tags: {
-            description: 'Native template-tags object (or JSON string), used with native_query',
+            description: 'Native template-tags object (or JSON string). Omitted → preserved from the card.',
             oneOf: [
               { type: 'object' },
+              { type: 'string' }
+            ]
+          },
+          parameters: {
+            description: 'Card parameters array. Omitted on native_query updates → existing parameters (same id strings) are re-sent.',
+            oneOf: [
+              { type: 'array', items: { type: 'object' } },
               { type: 'string' }
             ]
           }
@@ -4133,7 +4206,8 @@ export function getToolDefinitions() {
     },
     {
       name: 'mb_card_data',
-      description: 'Execute a card/question and get the results in specified format. For JSON, returns all rows up to max_rows (default 150); larger results set truncated=true. API errors include HTTP status and Metabase response body.',      inputSchema: {
+      description: 'Execute a card/question and get the results. For JSON, returns rows up to max_rows (default 150; truncated=true when capped). Text and structuredContent include running_time_ms when Metabase reports it. Errors always include structuredContent (Cursor -32600). Accepts Metabase parameter arrays or shorthand { created: "past120days~" }.',
+      inputSchema: {
         type: 'object',
         properties: {
           card_id: {
@@ -4149,33 +4223,46 @@ export function getToolDefinitions() {
           ignore_cache: {
             type: 'boolean',
             default: false,
-            description: 'Whether to bypass query cache and force fresh execution'
+            description: 'Bypass query cache (POST ignore_cache). When true, text/structuredContent report ignore_cache: true.'
           },
           parameters: {
-            type: 'array',
-            description: 'Sequential array of parameter objects per Metabase REST API specification (POST /api/card/:id/query)',
-            items: {
-              type: 'object',
-              properties: {
-                type: {
-                  type: 'string',
-                  description: 'Parameter type: category, date/single, date/range, date/relative, string/=, string/contains, number/=, number/between'
-                },
-                target: {
-                  type: 'array',
-                  description: 'Target path tuple: ["variable", ["template-tag", "tag_name"]] or ["dimension", ["field", field_id, null]]',
-                  items: {}
-                },
-                value: {
-                  description: 'Filter value to apply (string, number, array of values, or null)'
-                },
-                id: {
-                  type: 'string',
-                  description: 'Optional parameter ID or slug'
+            description: 'Card filters for POST /api/card/:id/query. Prefer Metabase array [{id,type,target,value}]. Shorthand object { slug: value } (e.g. { "created": "past120days~" }) is resolved via GET card parameters/template-tags.',
+            oneOf: [
+              {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    type: {
+                      type: 'string',
+                      description: 'Parameter type: category, date/single, date/range, date/relative, string/=, string/contains, number/=, number/between'
+                    },
+                    target: {
+                      type: 'array',
+                      description: 'Target path tuple: ["variable", ["template-tag", "tag_name"]] or ["dimension", ["template-tag", "tag_name"]]',
+                      items: {}
+                    },
+                    value: {
+                      description: 'Filter value to apply (string, number, array of values, or null)'
+                    },
+                    id: {
+                      type: 'string',
+                      description: 'Parameter ID (non-blank string; same id as on the card)'
+                    }
+                  },
+                  required: ['type', 'target', 'value']
                 }
               },
-              required: ['type', 'target', 'value']
-            }
+              {
+                type: 'object',
+                additionalProperties: true,
+                description: 'Shorthand slug→value map'
+              },
+              {
+                type: 'string',
+                description: 'JSON string of array or shorthand object'
+              }
+            ]
           },
           max_rows: {
             type: 'number',

@@ -17,12 +17,18 @@ import {
 import {
   applyDashcardLayoutUpdate,
   buildAddCardPutBody,
+  buildAddTextPutBody,
   buildCreateTabPutBody,
   dashcardsOf,
   resolveDashboardTabId,
   serializeDashcardForPut,
   serializeTabForPut,
 } from '../dashboard-layout.js';
+import { normalizeCardQueryParameters, parseParametersArg } from '../card-query-params.js';
+import {
+  buildNativeDatasetQueryUpdate,
+  mergeVisualizationSettings,
+} from '../native-card-update.js';
 
 const DEFAULT_CARD_DATA_MAX_ROWS = 150;
 const NATIVE_QUERY_TEXT_MAX = 50000;
@@ -88,12 +94,18 @@ export class CardsHandler extends BaseHandler {
       if (stage['lib/type'] === 'mbql.stage/native' || stage.native != null) {
         const native = stage.native;
         const query = typeof native === 'string' ? native : native?.query;
+        const stageTags =
+          stage['template-tags'] && typeof stage['template-tags'] === 'object'
+            ? stage['template-tags']
+            : null;
+        const nativeTags =
+          typeof native === 'object' && native?.['template-tags'] ? native['template-tags'] : null;
         return {
           kind: 'native',
           database,
           query,
           collection: stage.collection || (typeof native === 'object' ? native?.collection : null),
-          templateTags: typeof native === 'object' ? native?.['template-tags'] : null,
+          templateTags: stageTags || nativeTags,
         };
       }
       return { kind: 'mbql', database, stage };
@@ -133,94 +145,6 @@ export class CardsHandler extends BaseHandler {
     if (typeof query !== 'string' || !query.trim()) return null;
     if (query.length <= NATIVE_QUERY_TEXT_MAX) return query;
     return `${query.slice(0, NATIVE_QUERY_TEXT_MAX)}\n… [truncated ${query.length - NATIVE_QUERY_TEXT_MAX} chars]`;
-  }
-
-  /**
-   * True when dataset_query is native Mongo (classic or lib/stages), even if
-   * collection is blank. SQL native queries have no `collection` key.
-   */
-  isMongoNativeDatasetQuery(datasetQuery) {
-    if (!datasetQuery || typeof datasetQuery !== 'object') return false;
-
-    if (datasetQuery.type === 'native' && datasetQuery.native && typeof datasetQuery.native === 'object') {
-      return Object.prototype.hasOwnProperty.call(datasetQuery.native, 'collection');
-    }
-
-    if (datasetQuery['lib/type'] === 'mbql/query' && Array.isArray(datasetQuery.stages)) {
-      const stage = datasetQuery.stages[0] || {};
-      if (stage['lib/type'] === 'mbql.stage/native' || stage.native != null) {
-        if (Object.prototype.hasOwnProperty.call(stage, 'collection')) return true;
-        return (
-          stage.native &&
-          typeof stage.native === 'object' &&
-          Object.prototype.hasOwnProperty.call(stage.native, 'collection')
-        );
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Build classic `type:native` dataset_query for mb_card_update native_query.
-   * Preserves Mongo collection / template-tags from classic or lib/stages cards
-   * when the caller omits them (DEV-828).
-   */
-  buildNativeDatasetQueryUpdate(existingCard, nativeQuery, mongoCollection, templateTags) {
-    const current = existingCard?.dataset_query || {};
-    const database = current.database ?? existingCard?.database_id;
-    const parts = this.extractNativeParts(current);
-    const prevNative =
-      current.type === 'native' && current.native && typeof current.native === 'object'
-        ? current.native
-        : {};
-
-    const explicitCollection =
-      mongoCollection !== undefined && mongoCollection !== null && String(mongoCollection).trim() !== ''
-        ? String(mongoCollection).trim()
-        : undefined;
-    const preservedCollection =
-      typeof parts.collection === 'string' && parts.collection.trim() !== ''
-        ? parts.collection.trim()
-        : undefined;
-    const collection = explicitCollection ?? preservedCollection;
-    const isMongo =
-      explicitCollection !== undefined ||
-      this.isMongoNativeDatasetQuery(current) ||
-      preservedCollection !== undefined;
-
-    if (isMongo && !collection) {
-      throw new Error(
-        'Mongo native update requires mongo_collection (card has no persisted collection to preserve)'
-      );
-    }
-
-    const native = {
-      ...prevNative,
-      query: nativeQuery,
-    };
-
-    if (collection) {
-      native.collection = collection;
-    }
-
-    if (templateTags !== undefined) {
-      native['template-tags'] =
-        typeof templateTags === 'string' ? JSON.parse(templateTags) : templateTags;
-    } else if (
-      native['template-tags'] === undefined &&
-      parts.templateTags &&
-      typeof parts.templateTags === 'object'
-    ) {
-      // Lib/stages cards do not put tags on classic prevNative; keep them when rewriting.
-      native['template-tags'] = parts.templateTags;
-    }
-
-    return {
-      type: 'native',
-      database,
-      native,
-    };
   }
 
   async assertCardWritable(cardId, action, targetCollectionId) {
@@ -406,24 +330,52 @@ export class CardsHandler extends BaseHandler {
   }
 
   async handleCardUpdate(args) {
-    const { card_id, dataset_query, native_query, mongo_collection, template_tags, ...rest } = args;
+    const {
+      card_id,
+      dataset_query,
+      native_query,
+      mongo_collection,
+      template_tags,
+      parameters,
+      visualization_settings,
+      ...rest
+    } = args;
 
     try {
+      // Reuse allowlist GET for native merge / viz merge / parameters preserve (DEV-681).
       const existing = await this.assertCardWritable(card_id, 'mb_card_update', rest.collection_id);
 
       const updates = { ...rest };
+
+      if (visualization_settings !== undefined) {
+        const patch =
+          typeof visualization_settings === 'string'
+            ? JSON.parse(visualization_settings)
+            : visualization_settings;
+        updates.visualization_settings = mergeVisualizationSettings(
+          existing.visualization_settings,
+          patch
+        );
+      }
 
       if (dataset_query !== undefined) {
         updates.dataset_query =
           typeof dataset_query === 'string' ? JSON.parse(dataset_query) : dataset_query;
       } else if (native_query !== undefined) {
-        // Reuse the allowlist GET; merge collection from classic or lib/stages (DEV-828).
-        updates.dataset_query = this.buildNativeDatasetQueryUpdate(
+        // Classic or lib/stages in place; preserve collection/tags (DEV-828/681).
+        updates.dataset_query = buildNativeDatasetQueryUpdate(
           existing,
           native_query,
           mongo_collection,
           template_tags
         );
+        if (parameters === undefined && Array.isArray(existing.parameters) && existing.parameters.length > 0) {
+          updates.parameters = existing.parameters;
+        }
+      }
+
+      if (parameters !== undefined) {
+        updates.parameters = typeof parameters === 'string' ? JSON.parse(parameters) : parameters;
       }
 
       const card = await this.metabaseClient.request('PUT', `/api/card/${card_id}`, updates);
@@ -476,21 +428,41 @@ export class CardsHandler extends BaseHandler {
     }
   }
 
+  cardDataStructured(cardId, maxRows, ignoreCache, overrides = {}) {
+    return {
+      card_id: cardId ?? 0,
+      columns: [],
+      rows: [],
+      row_count: 0,
+      returned_row_count: 0,
+      max_rows: maxRows,
+      truncated: false,
+      running_time: null,
+      ignore_cache: Boolean(ignoreCache),
+      error: null,
+      ...overrides,
+    };
+  }
+
   async handleCardData(args) {
     const { card_id, format = 'json', ignore_cache = false, max_rows = DEFAULT_CARD_DATA_MAX_ROWS } = args;
-    let parameters = args.parameters;
     const parsedMaxRows = Number(max_rows);
     const maxRows = Number.isFinite(parsedMaxRows) && parsedMaxRows > 0
       ? Math.floor(parsedMaxRows)
       : DEFAULT_CARD_DATA_MAX_ROWS;
 
     try {
-      if (typeof parameters === 'string') {
-        try {
-          parameters = JSON.parse(parameters);
-        } catch (_) {
-          // ignore parse failure, let API validate
+      const rawParameters = parseParametersArg(args.parameters);
+      let parameters = null;
+      if (rawParameters != null) {
+        const needsCardLookup =
+          typeof rawParameters === 'object' && !Array.isArray(rawParameters);
+        let card = null;
+        if (needsCardLookup) {
+          // Resolve slug→value shorthand via card.parameters / template-tags (DEV-681).
+          card = await this.metabaseClient.request('GET', `/api/card/${card_id}`);
         }
+        parameters = normalizeCardQueryParameters(rawParameters, card);
       }
 
       let endpoint = `/api/card/${card_id}/query`;
@@ -501,10 +473,7 @@ export class CardsHandler extends BaseHandler {
       }
 
       const body = {};
-      if (parameters && Array.isArray(parameters) && parameters.length > 0) {
-        body.parameters = parameters;
-      } else if (parameters && typeof parameters === 'object' && !Array.isArray(parameters)) {
-        // Legacy Apurata callers sometimes passed a plain object
+      if (Array.isArray(parameters) && parameters.length > 0) {
         body.parameters = parameters;
       }
       if (ignore_cache) {
@@ -512,6 +481,10 @@ export class CardsHandler extends BaseHandler {
       }
 
       const result = await this.metabaseClient.request('POST', endpoint, body);
+      const runningTime =
+        typeof result?.running_time === 'number'
+          ? result.running_time
+          : (typeof result?.data?.running_time === 'number' ? result.data.running_time : null);
 
       if (format === 'json') {
         const data = result.data || result;
@@ -532,9 +505,11 @@ export class CardsHandler extends BaseHandler {
         const truncated = totalRows > maxRows;
         const returnedRows = truncated ? rows.slice(0, maxRows) : rows;
 
-        const header = truncated
-          ? `Card ${card_id} data (${totalRows} rows total, returning first ${returnedRows.length}; truncated: true):\n`
-          : `Card ${card_id} data (${totalRows} rows):\n`;
+        const metaBits = [`${totalRows} rows`];
+        if (truncated) metaBits.push(`returning first ${returnedRows.length}`, 'truncated: true');
+        if (runningTime != null) metaBits.push(`running_time_ms: ${runningTime}`);
+        if (ignore_cache) metaBits.push('ignore_cache: true');
+        const header = `Card ${card_id} data (${metaBits.join('; ')}):\n`;
 
         return {
           content: [{
@@ -544,35 +519,46 @@ export class CardsHandler extends BaseHandler {
               `${truncated ? `Sample (first ${returnedRows.length} of ${totalRows} rows)` : 'Rows'}:\n` +
               `${JSON.stringify(returnedRows, null, 2)}`
           }],
-          structuredContent: {
-            card_id,
+          structuredContent: this.cardDataStructured(card_id, maxRows, ignore_cache, {
             columns: columnNames,
             rows: returnedRows,
             row_count: totalRows,
             returned_row_count: returnedRows.length,
-            max_rows: maxRows,
             truncated,
-          },
-        };
-      } else {
-        let exportText = `Card ${card_id} data exported as ${format.toUpperCase()}`;
-        if (typeof result === 'string' && format === 'csv' && isPiiMaskingEnabled(args)) {
-          exportText = maskCSV(result, {
-            strict: args.mask_strict === true,
-            preserveDomain: args.preserve_domain !== false,
-            pseudonymize: args.pseudonymize === true,
-            salt: args.salt || 'metabase_ai_salt',
-          });
-        }
-        return {
-          content: [{
-            type: 'text',
-            text: exportText
-          }]
+            running_time: runningTime,
+          }),
         };
       }
+
+      let exportText = `Card ${card_id} data exported as ${format.toUpperCase()}`;
+      if (runningTime != null) {
+        exportText += ` (running_time_ms: ${runningTime})`;
+      }
+      if (ignore_cache) {
+        exportText += ' (ignore_cache: true)';
+      }
+      if (typeof result === 'string' && format === 'csv' && isPiiMaskingEnabled(args)) {
+        exportText = maskCSV(result, {
+          strict: args.mask_strict === true,
+          preserveDomain: args.preserve_domain !== false,
+          pseudonymize: args.pseudonymize === true,
+          salt: args.salt || 'metabase_ai_salt',
+        });
+      }
+      return {
+        content: [{ type: 'text', text: exportText }],
+        structuredContent: this.cardDataStructured(card_id, maxRows, ignore_cache, {
+          running_time: runningTime,
+        }),
+      };
     } catch (error) {
-      return { content: [{ type: 'text', text: `❌ Card data error: ${error.message}` }] };
+      // Cursor rejects tools that declare outputSchema but omit structuredContent (-32600).
+      return {
+        content: [{ type: 'text', text: `❌ Card data error: ${error.message}` }],
+        structuredContent: this.cardDataStructured(card_id, maxRows, ignore_cache, {
+          error: error.message,
+        }),
+      };
     }
   }
   async handleCardCopy(args) {
@@ -831,6 +817,72 @@ export class CardsHandler extends BaseHandler {
     } catch (error) {
       return {
         content: [{ type: 'text', text: `❌ Card addition error: ${error.message}` }],
+      };
+    }
+  }
+
+  async handleDashboardAddText(args) {
+    const { dashboard_id } = args;
+    const display = args.display === 'heading' ? 'heading' : 'text';
+    try {
+      const dashboard = await this.metabaseClient.request('GET', `/api/dashboard/${dashboard_id}`);
+      if (!dashboard || typeof dashboard !== 'object') {
+        throw new Error(`Dashboard ${dashboard_id} not found`);
+      }
+      assertWritableCollection(dashboard.collection_id, 'mb_dashboard_add_text');
+
+      const body = buildAddTextPutBody(dashboard, args);
+      const updated = await this.metabaseClient.request('PUT', `/api/dashboard/${dashboard_id}`, body);
+      const cards = dashcardsOf(updated);
+      const wantedText = args.text != null ? String(args.text) : null;
+      let placed = null;
+      if (args.dashcard_id != null) {
+        placed = cards.find((c) => c.id === args.dashcard_id) || null;
+      } else if (wantedText != null) {
+        placed =
+          [...cards].reverse().find(
+            (c) => c.card_id == null && c.visualization_settings?.text === wantedText
+          ) || null;
+      }
+      if (!placed) {
+        placed = [...cards].reverse().find((c) => c.card_id == null) || null;
+      }
+
+      const textPreview = (placed?.visualization_settings?.text || wantedText || '').slice(0, 120);
+      return {
+        content: [{
+          type: 'text',
+          text:
+            `✅ Dashboard ${display} ${args.dashcard_id != null ? 'updated' : 'added'}\n` +
+            `Dashboard: ${updated?.name || dashboard_id}\n` +
+            `dashcard_id: ${placed?.id ?? 'n/a'}\n` +
+            `dashboard_tab_id: ${placed?.dashboard_tab_id ?? args.dashboard_tab_id ?? 'none'}\n` +
+            `text: ${textPreview}${textPreview.length >= 120 ? '…' : ''}\n` +
+            `Total cards: ${cards.length}`,
+        }],
+        structuredContent: {
+          dashboard_id,
+          dashcard_id: placed?.id ?? null,
+          display,
+          text: placed?.visualization_settings?.text ?? wantedText,
+          dashboard_tab_id: placed?.dashboard_tab_id ?? args.dashboard_tab_id ?? null,
+          row: placed?.row ?? args.row ?? null,
+          col: placed?.col ?? args.col ?? null,
+        },
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `❌ Dashboard text error: ${error.message}` }],
+        structuredContent: {
+          dashboard_id: dashboard_id ?? 0,
+          dashcard_id: null,
+          display,
+          text: null,
+          dashboard_tab_id: null,
+          row: null,
+          col: null,
+          error: error.message,
+        },
       };
     }
   }

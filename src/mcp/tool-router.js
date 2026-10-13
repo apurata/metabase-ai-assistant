@@ -21,7 +21,7 @@ export const WRITE_TOOLS = new Set([
     'mb_auto_describe',
     // Dashboard mutations
     'mb_dashboard_create', 'mb_dashboard_update', 'mb_dashboard_delete',
-    'mb_dashboard_add_card', 'mb_dashboard_tab_create', 'mb_dashboard_add_card_sql', 'mb_dashboard_update_layout',
+    'mb_dashboard_add_card', 'mb_dashboard_add_text', 'mb_dashboard_tab_create', 'mb_dashboard_add_card_sql', 'mb_dashboard_update_layout',
     'mb_dashboard_card_update', 'mb_dashboard_card_remove', 'mb_dashboard_add_filter',
     'mb_dashboard_layout_optimize', 'mb_dashboard_template_executive',
     'ai_dashboard_build_full', 'dbt_build_dashboard_from_yaml',

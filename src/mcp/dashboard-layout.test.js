@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyDashcardLayoutUpdate,
   buildAddCardPutBody,
+  buildAddTextPutBody,
   buildCreateTabPutBody,
   resolveDashboardTabId,
   summarizeCollections,
@@ -59,6 +60,58 @@ describe('buildAddCardPutBody', () => {
     assert.equal(body.dashcards[1].card_id, 99);
     assert.equal(body.dashcards[1].dashboard_tab_id, 40);
     assert.equal(body.dashcards[1].id, -1);
+  });
+});
+
+describe('buildAddTextPutBody', () => {
+  it('appends a virtual text dashcard with card_id null', () => {
+    const body = buildAddTextPutBody(
+      {
+        tabs: [{ id: 1, name: 'Main' }],
+        dashcards: [{ id: 9, card_id: 10, row: 0, col: 0, size_x: 4, size_y: 4, dashboard_tab_id: 1 }],
+      },
+      {
+        text: 'Unit price note',
+        display: 'text',
+        dashboard_tab_id: 1,
+        row: 5,
+        col: 0,
+      }
+    );
+    assert.equal(body.dashcards.length, 2);
+    const textCard = body.dashcards[1];
+    assert.equal(textCard.id, -1);
+    assert.equal(textCard.card_id, null);
+    assert.equal(textCard.dashboard_tab_id, 1);
+    assert.equal(textCard.visualization_settings.text, 'Unit price note');
+    assert.equal(textCard.visualization_settings.virtual_card.display, 'text');
+  });
+
+  it('updates an existing virtual dashcard by dashcard_id', () => {
+    const body = buildAddTextPutBody(
+      {
+        tabs: [],
+        dashcards: [
+          {
+            id: 55,
+            card_id: null,
+            row: 0,
+            col: 0,
+            size_x: 18,
+            size_y: 2,
+            visualization_settings: {
+              text: 'old',
+              virtual_card: { display: 'text', dataset_query: {}, visualization_settings: {}, archived: false },
+            },
+          },
+        ],
+      },
+      { dashcard_id: 55, text: 'new copy', display: 'heading' }
+    );
+    assert.equal(body.dashcards.length, 1);
+    assert.equal(body.dashcards[0].id, 55);
+    assert.equal(body.dashcards[0].visualization_settings.text, 'new copy');
+    assert.equal(body.dashcards[0].visualization_settings.virtual_card.display, 'heading');
   });
 });
 

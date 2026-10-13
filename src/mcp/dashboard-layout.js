@@ -86,6 +86,95 @@ export function buildAddCardPutBody(dashboard, cardId, options = {}) {
   };
 }
 
+/** Metabase virtual dashcard (Add a text or heading) — card_id null. */
+export function buildVirtualTextVisualizationSettings(text, display = 'text') {
+  const kind = display === 'heading' ? 'heading' : 'text';
+  return {
+    virtual_card: {
+      name: null,
+      display: kind,
+      visualization_settings: {},
+      dataset_query: {},
+      archived: false,
+    },
+    text,
+  };
+}
+
+/**
+ * Add or update a virtual text/heading dashcard via PUT /api/dashboard/:id.
+ * Pass dashcard_id to edit an existing virtual card; omit to create (id: -1).
+ */
+export function buildAddTextPutBody(dashboard, options = {}) {
+  const display = options.display === 'heading' ? 'heading' : 'text';
+  const text = options.text;
+  const tabs = (dashboard?.tabs || []).map(serializeTabForPut);
+
+  if (options.dashcard_id != null) {
+    const cards = dashcardsOf(dashboard);
+    const target = cards.find((c) => c.id === options.dashcard_id);
+    if (!target) {
+      throw new Error(`dashcard_id ${options.dashcard_id} not found on dashboard`);
+    }
+    if (target.card_id != null) {
+      throw new Error(
+        `dashcard_id ${options.dashcard_id} is a question card (card_id=${target.card_id}); only virtual text/heading cards can be edited with mb_dashboard_add_text`
+      );
+    }
+    if (options.dashboard_tab_id !== undefined) {
+      resolveDashboardTabId(dashboard, options.dashboard_tab_id);
+    }
+    const nextText =
+      text !== undefined && text !== null ? String(text) : (target.visualization_settings?.text ?? '');
+    if (!String(nextText).trim()) {
+      throw new Error('text is required (non-empty) when creating or clearing is not allowed');
+    }
+    return {
+      tabs,
+      dashcards: cards.map((c) => {
+        if (c.id !== options.dashcard_id) return serializeDashcardForPut(c);
+        const next = serializeDashcardForPut(c);
+        if (options.row !== undefined) next.row = options.row;
+        if (options.col !== undefined) next.col = options.col;
+        if (options.size_x !== undefined || options.sizeX !== undefined) {
+          next.size_x = options.size_x ?? options.sizeX;
+        }
+        if (options.size_y !== undefined || options.sizeY !== undefined) {
+          next.size_y = options.size_y ?? options.sizeY;
+        }
+        if (options.dashboard_tab_id !== undefined) {
+          next.dashboard_tab_id = options.dashboard_tab_id;
+        }
+        next.visualization_settings = buildVirtualTextVisualizationSettings(nextText, display);
+        return next;
+      }),
+    };
+  }
+
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('text is required (non-empty markdown/plain string)');
+  }
+  const tabId = resolveDashboardTabId(dashboard, options.dashboard_tab_id);
+  return {
+    tabs,
+    dashcards: [
+      ...dashcardsOf(dashboard).map(serializeDashcardForPut),
+      {
+        id: -1,
+        card_id: null,
+        row: options.row ?? 0,
+        col: options.col ?? 0,
+        size_x: options.size_x ?? options.sizeX ?? (display === 'heading' ? 24 : 18),
+        size_y: options.size_y ?? options.sizeY ?? (display === 'heading' ? 1 : 2),
+        dashboard_tab_id: tabId,
+        parameter_mappings: [],
+        visualization_settings: buildVirtualTextVisualizationSettings(text, display),
+        series: [],
+      },
+    ],
+  };
+}
+
 export function applyDashcardLayoutUpdate(dashcard, args) {
   const next = serializeDashcardForPut(dashcard);
   if (args.row !== undefined) next.row = args.row;
