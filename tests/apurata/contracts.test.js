@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { CardsHandler } from '../../src/mcp/handlers/cards.js';
 import { CollectionsHandler } from '../../src/mcp/handlers/collections.js';
+import { SchemaHandler } from '../../src/mcp/handlers/schema.js';
 import { assertWritableCollection, getWritableCollectionIds } from '../../src/mcp/write-guards.js';
 import { TOOL_METADATA, getToolDefinitions } from '../../src/mcp/tool-registry.js';
 import {
@@ -395,6 +396,33 @@ describe('Apurata CardsHandler contracts', () => {
     });
   });
 
+  test('mb_card_get error responses include structuredContent for Cursor', async () => {
+    mockClient.request.mockRejectedValueOnce(new Error('status 403 cloudfront'));
+
+    const res = await handler.handleCardGet({ card_id: 474 });
+    expect(res.content[0].text).toMatch(/Card get error/);
+    expect(res.structuredContent).toEqual({
+      id: 474,
+      name: '',
+      description: null,
+      display: '',
+      collection_id: null,
+      dataset_query: null,
+      error: 'status 403 cloudfront',
+    });
+  });
+
+  test('mb_search error responses include structuredContent for Cursor', async () => {
+    mockClient.request.mockRejectedValueOnce(new Error('status 403 cloudfront'));
+
+    const res = await handler.handleSearch({ query: 'lend' });
+    expect(res.content[0].text).toMatch(/Search error/);
+    expect(res.structuredContent).toEqual({
+      results: [],
+      count: 0,
+    });
+  });
+
   test('mb_dashboard_add_text creates virtual card and respects allowlist', async () => {
     process.env.METABASE_WRITABLE_COLLECTION_IDS = '481';
     mockClient.request
@@ -701,6 +729,63 @@ describe('Apurata native-card-update', () => {
       stackable: { stack_type: 'normalized', foo: 1 },
       'graph.metrics': ['a'],
       'graph.dimensions': ['d'],
+    });
+  });
+});
+
+describe('Apurata db_table_profile structuredContent', () => {
+  test('success returns table, columns, and sample', async () => {
+    const mockClient = {
+      executeNativeQuery: jest.fn()
+        .mockResolvedValueOnce({ data: { rows: [[2]] } })
+        .mockResolvedValueOnce({
+          data: { rows: [['id', 'int4', 'NO', null], ['email', 'text', 'YES', null]] },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            rows: [[1, 'a@b.c']],
+            cols: [{ name: 'id' }, { name: 'email' }],
+          },
+        }),
+    };
+    const schema = new SchemaHandler(mockClient);
+    const res = await schema.handleTableProfile({
+      database_id: 1,
+      schema_name: 'public',
+      table_name: 'users',
+      show_distinct_values: false,
+      sample_rows: 1,
+    });
+
+    expect(res.structuredContent).toEqual({
+      table: 'public.users',
+      row_count: 2,
+      columns: [
+        { name: 'id', type: 'int4' },
+        { name: 'email', type: 'text' },
+      ],
+      sample: [[1, 'a@b.c']],
+    });
+    expect(res.content[0].text).toMatch(/Table Profile/);
+  });
+
+  test('error responses include structuredContent for Cursor', async () => {
+    const mockClient = {
+      executeNativeQuery: jest.fn().mockRejectedValueOnce(new Error('status 500 boom')),
+    };
+    const schema = new SchemaHandler(mockClient);
+    const res = await schema.handleTableProfile({
+      database_id: 1,
+      schema_name: 'public',
+      table_name: 'users',
+    });
+
+    expect(res.content[0].text).toMatch(/Table profile error/);
+    expect(res.structuredContent).toEqual({
+      table: 'public.users',
+      columns: [],
+      row_count: 0,
+      sample: [],
     });
   });
 });

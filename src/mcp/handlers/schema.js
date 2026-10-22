@@ -1015,6 +1015,7 @@ export class SchemaHandler {
       }
 
       // Sample data
+      let sample = [];
       if (sampleRows > 0 && rowCount > 0) {
         try {
           const sampleQuery = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT ${sampleRows}`;
@@ -1023,6 +1024,7 @@ export class SchemaHandler {
           const sampleCols = sampleResult.data?.cols || [];
 
           if (sampleData.length > 0) {
+            sample = sampleData;
             output += `📝 **Sample Data (${sampleData.length} rows):**\\n\`\`\`\\n`;
             // Header
             const headers = sampleCols.map(c => c.name);
@@ -1058,12 +1060,30 @@ export class SchemaHandler {
       }
 
       return {
-        content: [{ type: 'text', text: output }]
+        content: [{ type: 'text', text: output }],
+        structuredContent: {
+          table: `${schemaName}.${tableName}`,
+          row_count: Number(rowCount) || 0,
+          columns: columns.map(([name, type]) => ({
+            name: name == null ? '' : String(name),
+            type: type == null ? '' : String(type),
+          })),
+          sample,
+        },
       };
 
     } catch (error) {
+      // Cursor rejects tools that declare outputSchema but omit structuredContent (-32600).
+      const failedSchema = args.schema_name || 'public';
+      const failedTable = args.table_name || '';
       return {
-        content: [{ type: 'text', text: `❌ Table profile error: ${error.message}` }]
+        content: [{ type: 'text', text: `❌ Table profile error: ${error.message}` }],
+        structuredContent: {
+          table: failedTable ? `${failedSchema}.${failedTable}` : failedSchema,
+          columns: [],
+          row_count: 0,
+          sample: [],
+        },
       };
     }
   }

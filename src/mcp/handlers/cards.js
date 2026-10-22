@@ -325,7 +325,19 @@ export class CardsHandler extends BaseHandler {
         },
       };
     } catch (error) {
-      return { content: [{ type: 'text', text: `❌ Card get error: ${error.message}` }] };
+      // Cursor rejects tools that declare outputSchema but omit structuredContent (-32600).
+      return {
+        content: [{ type: 'text', text: `❌ Card get error: ${error.message}` }],
+        structuredContent: {
+          id: card_id ?? 0,
+          name: '',
+          description: null,
+          display: '',
+          collection_id: null,
+          dataset_query: null,
+          error: error.message,
+        },
+      };
     }
   }
 
@@ -1743,7 +1755,14 @@ export class CardsHandler extends BaseHandler {
         },
       };
     } catch (error) {
-      return { content: [{ type: 'text', text: `❌ Search error: ${error.message}` }] };
+      // Cursor rejects tools that declare outputSchema but omit structuredContent (-32600).
+      return {
+        content: [{ type: 'text', text: `❌ Search error: ${error.message}` }],
+        structuredContent: {
+          results: [],
+          count: 0,
+        },
+      };
     }
   }
 
@@ -2217,7 +2236,14 @@ export class CardsHandler extends BaseHandler {
         },
       };
     } catch (error) {
-      return { content: [{ type: 'text', text: `❌ Search error: ${error.message}` }] };
+      // Cursor rejects tools that declare outputSchema but omit structuredContent (-32600).
+      return {
+        content: [{ type: 'text', text: `❌ Search error: ${error.message}` }],
+        structuredContent: {
+          results: [],
+          count: 0,
+        },
+      };
     }
   }
 
