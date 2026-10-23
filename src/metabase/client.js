@@ -98,13 +98,17 @@ export class MetabaseClient {
       ...config,
       method: methodUpper,
       url: endpoint,
-      data: data
     };
 
-    // For GET requests with data, move to params if not already set
-    if (methodUpper === 'GET' && data && !requestConfig.params) {
-      requestConfig.params = data;
-      delete requestConfig.data;
+    // CloudFront answers 403 "Bad request" when GET/HEAD carries a body.
+    // The default Content-Type is application/json, so axios turns data:null
+    // into the body "null". Query args stay in params; no body on GET/HEAD.
+    if (methodUpper === 'GET' || methodUpper === 'HEAD') {
+      if (data != null && !requestConfig.params) {
+        requestConfig.params = data;
+      }
+    } else if (data != null) {
+      requestConfig.data = data;
     }
 
     try {
